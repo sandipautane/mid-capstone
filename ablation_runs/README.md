@@ -7,6 +7,8 @@ Following Notebooks are added:
    *  ResNet50 pre ativation architecture (without ReLu in skip connection)
    *  ResNet50 basic architetcure with conv layer instead of last FC layer.
    *  These architectures have been tried with --> lr finder, image augmentations, mixup, mixed precision training
-  **Conclusion**: final best acc was obtained with ResNet50 basic architetcure with conv layer instead of last FC layer. Learning rate finding needs to be honed!!
+
+   **Conclusion**: final best acc was obtained with ResNet50 basic architetcure with conv layer instead of last FC layer. Learning rate finding needs to be honed!!.
+   Refer to the notebook for each run detail and observations.
 
 3. ablation_run_tiny_imagenet_02.ipynb
