@@ -2,7 +2,7 @@ This folder contains the google colab notebook runs for ablation run studies on 
 
 Following Notebooks are added:
 
-1. **ablation_run_tiny_imagenet_01.ipynb**: experimented with the following techniques in this notebook:
+1. **ablation_run_tiny_imagenet_01.ipynb**: experimented with the following techniques in this notebook (https://colab.research.google.com/drive/12ICjPtVgA7EpOD2QFIMIHHTX9ikDOrbx?usp=sharing):
    *  ResNet50 basic architetcure
    *  ResNet50 pre ativation architecture (without ReLu in skip connection)
    *  ResNet50 basic architetcure with conv layer instead of last FC layer.
