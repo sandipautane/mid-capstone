@@ -3,5 +3,8 @@ torchvision>=0.16
 matplotlib>=3.5
 numpy>=1.21
 pillow>=8.3
+scipy
+antialiased_cnns
+
 
 
