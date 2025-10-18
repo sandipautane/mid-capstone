@@ -7,144 +7,29 @@ import torch.nn as nn
 import torch.optim as optim
 import torchvision
 import torchvision.transforms as transforms
-from models.resnet import ResNet50
-from dataloader import get_imagenet_loaders, get_imagenet_subset_loaders
+from models.model import resnet50
+from dataloader import get_dataloaders
+import torchsummary as summary
+from train_utils import calculate_total_steps, get_image_size_for_epoch, get_batch_size
+from train_utils import EarlyStopping, train, test
+from tqdm import tqdm
+import numpy as np
+import copy
+from torch.cuda.amp import autocast, GradScaler
 
 # Fix SSL certificate issue for downloading CIFAR-100
 ssl._create_default_https_context = ssl._create_unverified_context
 
-def get_cifar100_loaders(batch_size=128, num_workers=2):
-    """Load CIFAR-100 dataset with data augmentation."""
-    transform_train = transforms.Compose([
-        transforms.RandomCrop(32, padding=4),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
-    ])
-
-    transform_test = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
-    ])
-
-    trainset = torchvision.datasets.CIFAR100(
-        root='./data', train=True, download=True, transform=transform_train)
-    trainloader = torch.utils.data.DataLoader(
-        trainset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
-
-    testset = torchvision.datasets.CIFAR100(
-        root='./data', train=False, download=True, transform=transform_test)
-    testloader = torch.utils.data.DataLoader(
-        testset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
-
-    return trainloader, testloader
 
 
-def train(net, trainloader, criterion, optimizer, device, epoch):
-    print('\nEpoch: %d' % epoch)
-    net.train()
-    train_loss = 0
-    correct = 0
-    total = 0
-    for batch_idx, (inputs, targets) in enumerate(trainloader):
-        inputs, targets = inputs.to(device), targets.to(device)
-        optimizer.zero_grad()
-        outputs = net(inputs)
-        loss = criterion(outputs, targets)
-        loss.backward()
-        optimizer.step()
 
-        train_loss += loss.item()
-        _, predicted = outputs.max(1)
-        total += targets.size(0)
-        correct += predicted.eq(targets).sum().item()
-
-    avg_loss = train_loss / (batch_idx + 1)
-    accuracy = 100. * correct / total
-
-    # Print training results
-    print('Train Loss: %.3f | Train Acc: %.3f%% (%d/%d)'
-          % (avg_loss, accuracy, correct, total))
-    
-    return avg_loss, accuracy
-
-
-def test(net, testloader, criterion, device, epoch):
-    net.eval()
-    test_loss = 0
-    correct = 0
-    total = 0
-    with torch.no_grad():
-        for batch_idx, (inputs, targets) in enumerate(testloader):
-            inputs, targets = inputs.to(device), targets.to(device)
-            outputs = net(inputs)
-            loss = criterion(outputs, targets)
-
-            test_loss += loss.item()
-            _, predicted = outputs.max(1)
-            total += targets.size(0)
-            correct += predicted.eq(targets).sum().item()
-
-    avg_loss = test_loss / (batch_idx + 1)
-    accuracy = 100. * correct / total
-
-    # Print validation results
-    print('Val Loss: %.3f | Val Acc: %.3f%% (%d/%d)'
-          % (avg_loss, accuracy, correct, total))
-
-    return avg_loss, accuracy
-
-def save_checkpoint(net, optimizer, epoch, best_acc, filepath):
-    """Save model checkpoint."""
-    torch.save({
-        'epoch': epoch,
-        'model_state_dict': net.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-        'best_acc': best_acc,
-    }, filepath)
-
-
-def load_checkpoint(filepath, net, optimizer):
-    """Load model checkpoint."""
-    checkpoint = torch.load(filepath)
-    net.load_state_dict(checkpoint['model_state_dict'])
-    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    epoch = checkpoint['epoch']
-    best_acc = checkpoint['best_acc']
-    return epoch, best_acc
-
-
-def plot_results(epochs, train_losses, train_accuracies, val_losses, val_accuracies, save_path=None):
-    """Plot training and validation results."""
-    plt.figure(figsize=(12, 4))
-    
-    plt.subplot(1, 2, 1)
-    plt.plot(epochs, train_losses, label='Train Loss')
-    plt.plot(epochs, val_losses, label='Validation Loss')
-    plt.title('Training and Validation Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.legend()
-
-    plt.subplot(1, 2, 2)
-    plt.plot(epochs, train_accuracies, label='Train Accuracy')
-    plt.plot(epochs, val_accuracies, label='Validation Accuracy')
-    plt.title('Training and Validation Accuracy')
-    plt.xlabel('Epoch')
-    plt.ylabel('Accuracy (%)')
-    plt.legend()
-
-    plt.tight_layout()
-    if save_path:
-        plt.savefig(save_path)
-    plt.show()
 
 
 def main():
     parser = argparse.ArgumentParser(description='Train ResNet50 on ImageNet 1K')
     parser.add_argument('--epochs', type=int, default=90, help='number of epochs to train')
     parser.add_argument('--batch-size', type=int, default=256, help='batch size')
-    parser.add_argument('--lr', type=float, default=0.1, help='learning rate')
+    parser.add_argument('--lr', type=float, default=3e-4, help='learning rate')
     parser.add_argument('--momentum', type=float, default=0.9, help='SGD momentum')
     parser.add_argument('--weight-decay', type=float, default=1e-4, help='weight decay')
     parser.add_argument('--resume', type=str, default='', help='path to latest checkpoint')
@@ -154,94 +39,70 @@ def main():
     parser.add_argument('--subset-size', type=int, default=10000, help='size of subset to use')
     parser.add_argument('--num-workers', type=int, default=8, help='number of data loading workers')
     parser.add_argument('--plot', action='store_true', help='plot training results')
+    parser.add_argument('--drop-path-rate', type=float, default=0.2, help='drop path rate')
+    parser.add_argument('--use-blurpool', action='store_true', help='use blurpool')
     args = parser.parse_args()
 
-    # Create save directory
-    os.makedirs(args.save_dir, exist_ok=True)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print("Device:", device)
 
-    # Set device
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f'Using device: {device}')
+# Create model with less regularization
+    model = resnet50(num_classes=1000, drop_path_rate=args.drop_path_rate, use_blurpool=args.use_blurpool).to(device)
 
-    # Load data
-    if args.subset:
-        print(f'Loading ImageNet subset ({args.subset_size} samples)...')
-        trainloader, valloader = get_imagenet_subset_loaders(
-            data_dir=args.data_dir,
-            batch_size=args.batch_size,
-            num_workers=args.num_workers,
-            subset_size=args.subset_size
-        )
-    else:
-        print('Loading full ImageNet dataset...')
-        trainloader, valloader = get_imagenet_loaders(
-            data_dir=args.data_dir,
-            batch_size=args.batch_size,
-            num_workers=args.num_workers
-        )
+# Optimizer with lower weight decay
+    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
-    # Initialize model for ImageNet (1000 classes, 224x224 input)
-    net = ResNet50(num_classes=1000, input_size=224)
-    net = net.to(device)
+# find total steps
+    total_steps = calculate_total_steps(args.epochs)  # For 100 epochs
 
-    # Define loss and optimizer
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
-    # Use ImageNet-style learning rate schedule
-    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[30, 60], gamma=0.1)
+# Scheduler with correct total steps
+    scheduler = optim.lr_scheduler.OneCycleLR(
+        optimizer,
+        max_lr=args.lr,
+        total_steps=total_steps,
+        pct_start=0.3,
+        anneal_strategy='cos'
+    )
 
-    # Initialize training tracking
-    start_epoch = 0
-    best_acc = 0
-    train_losses = []
-    train_accuracies = []
-    val_losses = []
-    val_accuracies = []
+# Track best accuracy
+    best_acc = 0.0
+    checkpoint_path = args.save_dir + "/best_resnet50_imagenet_1k.pt"
 
-    # Resume from checkpoint if specified
-    if args.resume:
-        if os.path.isfile(args.resume):
-            print(f'Loading checkpoint {args.resume}')
-            start_epoch, best_acc = load_checkpoint(args.resume, net, optimizer)
-            print(f'Resumed from epoch {start_epoch}, best accuracy: {best_acc:.2f}%')
-        else:
-            print(f'No checkpoint found at {args.resume}')
+# In your training loop:
+    scaler = torch.cuda.amp.GradScaler()
+    current_size = None
 
-    # Training loop
-    print('Starting training...')
-    for epoch in range(start_epoch, args.epochs):
-        # Train
-        train_loss, train_acc = train(net, trainloader, criterion, optimizer, device, epoch)
-        train_losses.append(train_loss)
-        train_accuracies.append(train_acc)
+    batch_size = args.batch_size
+    EPOCHS = args.epochs
 
-        # Validate
-        val_loss, val_acc = test(net, valloader, criterion, device, epoch)
-        val_losses.append(val_loss)
-        val_accuracies.append(val_acc)
+    for epoch in range(1, EPOCHS + 1):
+    # Check if we need to change image size
+        new_size = get_image_size_for_epoch(epoch)
+        if new_size != current_size:
+            print(f"\n{'='*50}")
+            print(f"Switching to image size: {new_size}x{new_size}")
+            print(f"{'='*50}\n")
 
-        # Update learning rate
-        scheduler.step()
+            batch_size = get_batch_size(new_size)
+ # Recreate dataloaders with new size
+        train_loader, val_loader = get_dataloaders(args.data_dir, batch_size=batch_size,
+                                                    image_size=new_size, num_workers=4)
+        current_size = new_size
 
-        # Save checkpoint if best accuracy
-        if val_acc > best_acc:
-            best_acc = val_acc
-            save_checkpoint(net, optimizer, epoch, best_acc, 
-                          os.path.join(args.save_dir, 'best_model.pth'))
-            print(f'New best accuracy: {best_acc:.2f}%')
-
-        # Save regular checkpoint
-        if (epoch + 1) % 10 == 0:
-            save_checkpoint(net, optimizer, epoch, best_acc, 
-                          os.path.join(args.save_dir, f'checkpoint_epoch_{epoch}.pth'))
-
-    print(f'Training completed. Best accuracy: {best_acc:.2f}%')
-
-    # Plot results
-    if args.plot:
-        epochs = range(len(train_losses))
-        plot_results(epochs, train_losses, train_accuracies, val_losses, val_accuracies,
-                    os.path.join(args.save_dir, 'training_plots.png'))
+    tr_loss, tr_acc = train(model, device, train_loader, optimizer, scheduler, epoch, scaler, mixup_alpha=0.2)
+    val_loss, val_acc = test(model, device, val_loader, epoch)
+     # Save if best accuracy
+    if epoch > 60:# start saving only after 20th epoch
+        if accuracy > best_acc:
+            best_acc = accuracy
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'accuracy': accuracy,
+                'loss': avg_loss
+            }, checkpoint_path)
+            print(f"✓ Saved best model at epoch {epoch} with accuracy: {accuracy:.2f}%")
 
 
 if __name__ == '__main__':

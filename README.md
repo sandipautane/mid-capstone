@@ -92,6 +92,7 @@ For ImageNet subset (10,000 samples):
 ├── models/
 │   └── resnet.py          # ResNet implementation (ImageNet optimized)
 ├── dataloader.py          # ImageNet dataloader with transforms and augmentation
+├── download_imagenet.py   # ImageNet 1K dataset downloader
 ├── train.py               # Training script for ImageNet
 ├── example_usage.py       # Example usage of dataloader and model
 ├── requirements.txt       # Dependencies
@@ -123,9 +124,39 @@ The ResNet50 implementation uses:
 
 ## Dataset Setup
 
+### Downloading ImageNet 1K
+
+We provide multiple methods to download ImageNet 1K dataset:
+
+#### Method 1: Simple Download (Recommended for testing)
+```bash
+# Try automatic download using torchvision
+
+
+```
+
+#### Method 2: Manual Download (Full dataset)
+```bash
+# Get detailed instructions for manual download
+python download_imagenet.py --method manual
+```
+
+This will show you:
+1. How to register at http://www.image-net.org/
+2. Where to download the tar files (138GB train + 6.3GB val)
+3. How to organize the files
+
+#### Method 3: Automatic Download (with URLs)
+```bash
+# If you have download URLs from ImageNet registration
+python download_imagenet.py --method auto \
+  --train-url "http://your-train-url.tar" \
+  --val-url "http://your-val-url.tar"
+```
+
 ### ImageNet Dataset Structure
 
-Place your ImageNet dataset in the following structure:
+After download, your dataset should have this structure:
 ```
 data/
 └── imagenet/
