@@ -85,24 +85,33 @@ def main():
 
             batch_size = get_batch_size(new_size)
  # Recreate dataloaders with new size
-        train_loader, val_loader = get_dataloaders(args.data_dir, batch_size=batch_size,
-                                                    image_size=new_size, num_workers=4)
+        train_loader, val_loader = get_dataloaders(
+            args.data_dir, 
+            batch_size=batch_size,
+            image_size=new_size, 
+            num_workers=4,
+            subset_size=args.subset_size if args.subset else None,
+            val_subset_size=args.subset_size // 10 if args.subset else None,  # 10% of training subset for validation
+            use_subset=args.subset
+        )
         current_size = new_size
 
-    tr_loss, tr_acc = train(model, device, train_loader, optimizer, scheduler, epoch, scaler, mixup_alpha=0.2)
-    val_loss, val_acc = test(model, device, val_loader, epoch)
-     # Save if best accuracy
-    if epoch > 60:# start saving only after 20th epoch
-        if accuracy > best_acc:
-            best_acc = accuracy
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'accuracy': accuracy,
-                'loss': avg_loss
-            }, checkpoint_path)
-            print(f"✓ Saved best model at epoch {epoch} with accuracy: {accuracy:.2f}%")
+        tr_loss, tr_acc = train(model, device, train_loader, optimizer, scheduler, epoch, scaler, mixup_alpha=0.2)
+        val_loss, val_acc = test(model, device, val_loader, epoch)
+        
+        # Save if best accuracy
+        if epoch > 60:  # start saving only after 60th epoch
+            if val_acc > best_acc:
+                best_acc = val_acc
+                torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'scheduler_state_dict': scheduler.state_dict(),
+                    'accuracy': val_acc,
+                    'loss': val_loss
+                }, checkpoint_path)
+                print(f"✓ Saved best model at epoch {epoch} with accuracy: {val_acc:.2f}%")
 
 
 if __name__ == '__main__':
