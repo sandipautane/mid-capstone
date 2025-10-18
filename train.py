@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torchvision
+
 import torchvision.transforms as transforms
 from models.model import resnet50
 from dataloader import get_dataloaders

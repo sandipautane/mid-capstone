@@ -1,16 +1,14 @@
 import os
 import torch
 
-import torchvision
+
 import torchvision.transforms as transforms
 from torchvision.datasets import ImageNet
-import urllib.request
-import tarfile
-import shutil
-from pathlib import Path
-import argparse
 
-import math
+from pathlib import Path
+
+
+
 import torch
 import matplotlib.pyplot as plt
 
@@ -97,90 +95,9 @@ def get_dataloaders(data_path, batch_size=128, image_size=64, num_workers=2):
     return train_loader, val_loader
 
 
-def mixup_data(x, y, alpha=0.2, device='cuda'):
-    '''Returns mixed inputs, pairs of targets, and lambda'''
-    if alpha > 0:
-        lam = np.random.beta(alpha, alpha)
-    else:
-        lam = 1
-
-    batch_size = x.size()[0]
-    index = torch.randperm(batch_size).to(device)
-
-    mixed_x = lam * x + (1 - lam) * x[index, :]
-    y_a, y_b = y, y[index]
-    return mixed_x, y_a, y_b, lam
-
-def mixup_criterion(criterion, pred, y_a, y_b, lam):
-    return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
 
 
-def cutmix_data(x, y, alpha=1.0, device='cuda'):
-    '''Returns CutMix inputs, pairs of targets, and lambda'''
-    if alpha > 0:
-        lam = np.random.beta(alpha, alpha)
-    else:
-        lam = 1
 
-    batch_size = x.size()[0]
-    index = torch.randperm(batch_size).to(device)
-
-    # Get random box
-    W = x.size()[2]
-    H = x.size()[3]
-    cut_rat = np.sqrt(1. - lam)
-    cut_w = int(W * cut_rat)
-    cut_h = int(H * cut_rat)
-
-    # Uniform sampling
-    cx = np.random.randint(W)
-    cy = np.random.randint(H)
-
-    bbx1 = np.clip(cx - cut_w // 2, 0, W)
-    bby1 = np.clip(cy - cut_h // 2, 0, H)
-    bbx2 = np.clip(cx + cut_w // 2, 0, W)
-    bby2 = np.clip(cy + cut_h // 2, 0, H)
-
-    # Apply cutmix
-    x[:, :, bbx1:bbx2, bby1:bby2] = x[index, :, bbx1:bbx2, bby1:bby2]
-
-    # Adjust lambda to exactly match pixel ratio
-    lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (W * H))
-
-    y_a, y_b = y, y[index]
-    return x, y_a, y_b, lam
-
-
-class EMA:
-    def __init__(self, model, decay=0.999):
-        self.model = model
-        self.decay = decay
-        self.shadow = {}
-        self.backup = {}
-        self.register()
-
-    def register(self):
-        for name, param in self.model.named_parameters():
-            if param.requires_grad:
-                self.shadow[name] = param.data.clone()
-
-    def update(self):
-        for name, param in self.model.named_parameters():
-            if param.requires_grad:
-                new_average = (1.0 - self.decay) * param.data + self.decay * self.shadow[name]
-                self.shadow[name] = new_average.clone()
-
-    def apply_shadow(self):
-        for name, param in self.model.named_parameters():
-            if param.requires_grad:
-                self.backup[name] = param.data
-                param.data = self.shadow[name]
-
-    def restore(self):
-        for name, param in self.model.named_parameters():
-            if param.requires_grad:
-                param.data = self.backup[name]
-        self.backup = {}
 
 
 ################################################################
