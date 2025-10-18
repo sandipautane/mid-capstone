@@ -74,6 +74,7 @@ output = model(x)  # Shape: [1, 1000]
 | `--subset-size` | 10000 | Size of subset to use |
 | `--num-workers` | 8 | Number of data loading workers |
 | `--plot` | False | Generate training plots |
+| 'use_blurpool' | False | use blurpool in place of maxpool
 
 ## Expected Performance
 
