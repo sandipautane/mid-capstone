@@ -131,7 +131,7 @@ def train_worker(rank, world_size, args):
     # Scheduler with correct total steps
     scheduler = optim.lr_scheduler.OneCycleLR(
         optimizer,
-        max_lr=args.lr,
+        max_lr=args.max_lr,
         total_steps=total_steps,
         pct_start=0.3,
         anneal_strategy='cos'
@@ -221,7 +221,8 @@ def main():
     parser = argparse.ArgumentParser(description='Train ResNet50 on ImageNet 1K')
     parser.add_argument('--epochs', type=int, default=90, help='number of epochs to train')
     parser.add_argument('--batch-size', type=int, default=256, help='batch size')
-    parser.add_argument('--lr', type=float, default=3e-4, help='learning rate')
+    parser.add_argument('--lr', type=float, default=1e-3, help='base learning rate')
+    parser.add_argument('--max-lr', type=float, default=1e-2, help='maximum learning rate for OneCycleLR')
     parser.add_argument('--momentum', type=float, default=0.9, help='SGD momentum')
     parser.add_argument('--weight-decay', type=float, default=1e-4, help='weight decay')
     parser.add_argument('--resume', type=str, default='', help='path to latest checkpoint')

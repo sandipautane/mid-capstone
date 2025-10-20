@@ -98,7 +98,8 @@ python train.py \
     --data-dir /path/to/ILSVRC \
     --epochs 90 \
     --batch-size 128 \
-    --lr 3e-4 \
+    --lr 1e-3 \
+    --max-lr 1e-2 \
     --num-workers 8 \
     --save-dir ./checkpoints
 
@@ -109,7 +110,8 @@ python train.py \
     --subset-size 10000 \
     --epochs 30 \
     --batch-size 128 \
-    --lr 3e-4
+    --lr 1e-3 \
+    --max-lr 1e-2
 ```
 
 ### Multi-GPU Training with DDP (4x V100)
@@ -122,7 +124,8 @@ python train.py \
     --data-dir /path/to/ILSVRC \
     --epochs 90 \
     --batch-size 128 \
-    --lr 1.2e-3 \
+    --lr 1e-3 \
+    --max-lr 1e-2 \
     --num-workers 8 \
     --save-dir ./checkpoints \
     --drop-path-rate 0.2
@@ -134,7 +137,8 @@ python train.py \
     --data-dir /path/to/ILSVRC \
     --epochs 90 \
     --batch-size 128 \
-    --lr 1.2e-3 \
+    --lr 1e-3 \
+    --max-lr 1e-2 \
     --num-workers 8 \
     --save-dir ./checkpoints \
     --drop-path-rate 0.2 \
@@ -149,33 +153,43 @@ python train.py \
     --subset-size 10000 \
     --epochs 30 \
     --batch-size 128 \
-    --lr 1.2e-3
+    --lr 1e-3 \
+    --max-lr 1e-2
 ```
 
 ---
 
-## 📈 Learning Rate Scaling for DDP
+## 📈 Learning Rate Configuration
 
-When using DDP with multiple GPUs, you need to scale the learning rate based on the effective batch size:
+The training script uses **OneCycleLR** scheduler with separate base and maximum learning rates:
 
-**Linear Scaling Rule**: `LR_multi_gpu = LR_single_gpu × sqrt(num_gpus)` or `LR_multi_gpu = LR_single_gpu × num_gpus`
+- **Base LR (`--lr`)**: Initial learning rate for the optimizer (default: 1e-3)
+- **Max LR (`--max-lr`)**: Peak learning rate during training (default: 1e-2)
+
+### OneCycleLR Schedule:
+1. **Warmup Phase** (30% of training): LR increases from `base_lr` to `max_lr`
+2. **Annealing Phase** (70% of training): LR decreases from `max_lr` to `base_lr/25`
 
 ### Recommended Learning Rates:
 
-| Setup | Base LR | Max LR (OneCycleLR) | Scaling Factor |
-|-------|---------|---------------------|----------------|
-| **1 GPU** | 3e-4 | 3e-4 | 1x |
-| **4 GPUs (Conservative)** | 6e-4 | 1.2e-3 | 2x (sqrt scaling) |
-| **4 GPUs (Aggressive)** | 1.2e-3 | 2e-3 | 4x (linear scaling) |
+| Setup | Base LR (`--lr`) | Max LR (`--max-lr`) | Notes |
+|-------|------------------|---------------------|-------|
+| **1 GPU** | 1e-3 | 1e-2 | Standard configuration |
+| **4 GPUs (DDP)** | 1e-3 | 1e-2 | Same as single GPU (effective batch size is 4x) |
+| **4 GPUs (Conservative)** | 5e-4 | 5e-3 | If training is unstable |
+| **4 GPUs (Aggressive)** | 2e-3 | 2e-2 | For faster convergence |
 
-**Recommendation**: Start with **2x scaling** (LR = 1.2e-3) for stability, then experiment with higher rates if training is stable.
+**Recommendation**: Start with **default values** (lr=1e-3, max-lr=1e-2) and adjust based on training stability.
 
 ```bash
-# Conservative (safer, recommended for first run)
-python train.py --ddp --world-size 4 --lr 1.2e-3 --data-dir /path/to/ILSVRC
+# Default (recommended)
+python train.py --ddp --world-size 4 --lr 1e-3 --max-lr 1e-2 --data-dir /path/to/ILSVRC
 
-# Aggressive (faster convergence, may be unstable)
-python train.py --ddp --world-size 4 --lr 2e-3 --data-dir /path/to/ILSVRC
+# Conservative (if training is unstable)
+python train.py --ddp --world-size 4 --lr 5e-4 --max-lr 5e-3 --data-dir /path/to/ILSVRC
+
+# Aggressive (for faster convergence)
+python train.py --ddp --world-size 4 --lr 2e-3 --max-lr 2e-2 --data-dir /path/to/ILSVRC
 ```
 
 ---
@@ -271,7 +285,8 @@ python train.py \
     --data-dir /data/ILSVRC \
     --epochs 90 \
     --batch-size 128 \
-    --lr 1.2e-3 \
+    --lr 1e-3 \
+    --max-lr 1e-2 \
     --num-workers 8 \
     --save-dir ./checkpoints \
     --drop-path-rate 0.2
@@ -312,7 +327,10 @@ This technique speeds up early training and improves final accuracy.
 
 ### Optimizer & Scheduler
 - **Optimizer**: AdamW
+  - Base LR: 1e-3 (default)
+  - Weight Decay: 1e-4
 - **Scheduler**: OneCycleLR
+  - Max LR: 1e-2 (default)
   - pct_start: 0.3 (30% warmup)
   - anneal_strategy: cosine
 
