@@ -1,4 +1,6 @@
-This folder contains the google colab notebook runs for ablation run studies on **Tiny ImageNet** dataset so that we are able to access the tecchniques that need to be applied on ImageNet 1k.
+## Ablation Runs
+
+This folder contains the google colab notebook runs for ablation run studies on **Tiny ImageNet** dataset so that we are able to access the techniques that need to be applied on ImageNet 1k.
 
 Following Notebooks are added:
 
@@ -27,8 +29,6 @@ Following Notebooks are added:
      * **Exponential Moving Average (EMA)**
    
 **Conclusion**: Achieved ~67% accuracy with the combination of all techniques. Stochastic Depth significantly reduced the train-test gap. EMA provided better validation performance through parameter smoothing.
-
-## Key Learning: Exponential Moving Average (EMA)
 
 **EMA Implementation Insights:**
 - **Decay Rate**: Used `decay=0.9999` (very high decay for stability)
