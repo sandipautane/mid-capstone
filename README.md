@@ -80,10 +80,10 @@ This repository now supports both **single-GPU** and **multi-GPU** training on I
 
 | Setup | GPUs | Batch Size | Training Time | Cost (Spot) | Speedup |
 |-------|------|------------|---------------|-------------|---------|
-| Single GPU | 1x V100 | 256 | ~32-40 hours | ~$40-60 | 1x |
-| DDP (Multi-GPU) | 4x V100 | 256 per GPU | ~8-10 hours | ~$10-15 | ~4x |
+| Single GPU | 1x V100 | 128 | ~32-40 hours | ~$40-60 | 1x |
+| DDP (Multi-GPU) | 4x V100 | 128 per GPU | ~8-10 hours | ~$10-15 | ~4x |
 
-**Note**: With DDP, each GPU processes a batch independently, so effective batch size = 256 × 4 = 1024
+**Note**: With DDP, each GPU processes a batch independently, so effective batch size = 128 × 4 = 512
 
 ---
 
@@ -96,7 +96,7 @@ This repository now supports both **single-GPU** and **multi-GPU** training on I
 python train.py \
     --data-dir /path/to/ILSVRC \
     --epochs 90 \
-    --batch-size 256 \
+    --batch-size 128 \
     --lr 3e-4 \
     --num-workers 8 \
     --save-dir ./checkpoints
@@ -107,7 +107,7 @@ python train.py \
     --subset \
     --subset-size 10000 \
     --epochs 30 \
-    --batch-size 256 \
+    --batch-size 128 \
     --lr 3e-4
 ```
 
@@ -120,7 +120,19 @@ python train.py \
     --world-size 4 \
     --data-dir /path/to/ILSVRC \
     --epochs 90 \
-    --batch-size 256 \
+    --batch-size 128 \
+    --lr 1.2e-3 \
+    --num-workers 8 \
+    --save-dir ./checkpoints \
+    --drop-path-rate 0.2
+
+# With BlurPool (optional, use --use-blurpool flag)
+python train.py \
+    --ddp \
+    --world-size 4 \
+    --data-dir /path/to/ILSVRC \
+    --epochs 90 \
+    --batch-size 128 \
     --lr 1.2e-3 \
     --num-workers 8 \
     --save-dir ./checkpoints \
@@ -135,7 +147,7 @@ python train.py \
     --subset \
     --subset-size 10000 \
     --epochs 30 \
-    --batch-size 256 \
+    --batch-size 128 \
     --lr 1.2e-3
 ```
 
@@ -257,12 +269,11 @@ python train.py \
     --world-size 4 \
     --data-dir /data/ILSVRC \
     --epochs 90 \
-    --batch-size 256 \
+    --batch-size 128 \
     --lr 1.2e-3 \
     --num-workers 8 \
     --save-dir ./checkpoints \
-    --drop-path-rate 0.2 \
-    --use-blurpool
+    --drop-path-rate 0.2
 
 # Detach from tmux: Ctrl+B, then D
 # Reattach: tmux attach -t training
@@ -277,6 +288,8 @@ The training script automatically adjusts image sizes during training:
 - **Epochs 1-30**: 64×64 (batch size: 256)
 - **Epochs 31-50**: 128×128 (batch size: 128)
 - **Epochs 51-90**: 224×224 (batch size: 64)
+
+**Note**: These batch sizes are per-GPU. With 4 GPUs and DDP, the effective global batch size is 4x these values.
 
 This technique speeds up early training and improves final accuracy.
 
@@ -294,6 +307,7 @@ This technique speeds up early training and improves final accuracy.
 - **Weight Decay**: 1e-4
 - **Gradient Clipping**: Max norm = 1.0
 - **Mixed Precision Training**: Automatic with GradScaler
+- **BlurPool (Optional)**: Anti-aliasing downsampling (use `--use-blurpool` flag, default: False)
 
 ### Optimizer & Scheduler
 - **Optimizer**: AdamW
