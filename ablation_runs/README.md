@@ -17,3 +17,5 @@ Following Notebooks are added:
      * Stochastic Depth
    
 **Conclusion**:Progressive Batch Resizing and CutMix along with MixUp really push the accuracy ~10% higher, while using Stochastic Depth reduces the difference b/w test and train very low.
+
+3. **reading_imagenet_data.ipynb**: this notebook contains the actual methods to be used for reading ImageNet data set based on it's actual folder structure.
