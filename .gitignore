@@ -1,3 +1,53 @@
+pyproject.toml
+.DS_Store
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+*.egg-info/
+*.egg
+*.env
+.env
 .venv/
+venv/
+ENV/
+env/
+build/
+dist/
+*.log
 ablaion_runs/data/
 ablaion_runs/models/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# Data, models, outputs
+*.h5
+*.ckpt
+*.pth
+*.pt
+*.npz
+*.npy
+*.csv
+*.tsv
+*.xlsx
+
+# Images
+*.png
+*.jpg
+*.jpeg
+*.gif
+
+# System files
+Thumbs.db
+
+# Git
+.git/
