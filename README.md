@@ -53,6 +53,7 @@ ema.restore()       # Restore original weights
 ```
 
 **Initial Challenges**: First EMA attempt failed (accuracy stuck at 0.5%) due to improper decay parameter tuning, highlighting the importance of careful EMA configuration.
+**We should not use EMA in the final run!!**
 
 ---
 
@@ -183,7 +184,7 @@ python train.py --ddp --world-size 4 --lr 2e-3 --data-dir /path/to/ILSVRC
 
 The code supports both **ILSVRC** (official ImageNet) structure and simple **train/val** folder structure:
 
-### ILSVRC Structure (Auto-detected)
+### ILSVRC Structure
 ```
 ILSVRC/
 ├── Data/
