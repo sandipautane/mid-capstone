@@ -42,10 +42,62 @@ def get_val_transforms(image_size=64):
         ToTensorV2(),
     ])
 
+
+class ImageNetVal(Dataset):
+    """
+    Custom validation dataset for ImageNet that reads from val.txt
+    Supports both ILSVRC structure and simple train/val structure
+    """
+    def __init__(self, val_dir, val_txt_path, transform=None):
+        self.val_dir = val_dir
+        self.transform = transform
+
+        # Read val.txt to create mapping
+        self.samples = []
+        with open(val_txt_path, 'r') as f:
+            for line in f:
+                img_name, class_idx = line.strip().split()
+                img_path = os.path.join(val_dir, img_name + '.JPEG')
+                self.samples.append((img_path, int(class_idx) - 1))  # Convert to 0-indexed
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        img_path, label = self.samples[idx]
+        img = Image.open(img_path).convert('RGB')
+        img = np.array(img)
+
+        if self.transform is not None:
+            img = self.transform(image=img)["image"]
+
+        return img, label
+
+
 class AlbuImageNet1K(Dataset):
+    """
+    ImageNet dataset wrapper with Albumentations transforms
+    Supports both ILSVRC structure (Data/CLS-LOC/train) and simple train/val structure
+    """
     def __init__(self, root, train=True, transform=None):
-        split = 'train' if train else 'val'
-        self.ds = datasets.ImageFolder(os.path.join(root, split))
+        # Check if root has ILSVRC structure (Data/CLS-LOC/)
+        ilsvrc_train_path = os.path.join(root, 'Data', 'CLS-LOC', 'train')
+        ilsvrc_val_path = os.path.join(root, 'Data', 'CLS-LOC', 'val')
+
+        if os.path.exists(ilsvrc_train_path) and train:
+            # ILSVRC structure
+            self.ds = datasets.ImageFolder(ilsvrc_train_path)
+            self.is_ilsvrc = True
+        elif os.path.exists(ilsvrc_val_path) and not train:
+            # ILSVRC structure - but for val, we'll use ImageNetVal class instead
+            self.ds = datasets.ImageFolder(ilsvrc_val_path)
+            self.is_ilsvrc = True
+        else:
+            # Simple train/val structure
+            split = 'train' if train else 'val'
+            self.ds = datasets.ImageFolder(os.path.join(root, split))
+            self.is_ilsvrc = False
+
         self.transform = transform
 
     def __len__(self):
@@ -62,10 +114,23 @@ class AlbuImageNet1K(Dataset):
 class SubsetImageNet1K(Dataset):
     """ImageNet subset dataset that samples a specified number of images per class"""
     def __init__(self, root, train=True, transform=None, subset_size=None, val_subset_size=None):
-        split = 'train' if train else 'val'
-        self.full_dataset = datasets.ImageFolder(os.path.join(root, split))
+        # Check if root has ILSVRC structure (Data/CLS-LOC/)
+        ilsvrc_train_path = os.path.join(root, 'Data', 'CLS-LOC', 'train')
+        ilsvrc_val_path = os.path.join(root, 'Data', 'CLS-LOC', 'val')
+
+        if os.path.exists(ilsvrc_train_path) and train:
+            # ILSVRC structure
+            self.full_dataset = datasets.ImageFolder(ilsvrc_train_path)
+        elif os.path.exists(ilsvrc_val_path) and not train:
+            # ILSVRC structure
+            self.full_dataset = datasets.ImageFolder(ilsvrc_val_path)
+        else:
+            # Simple train/val structure
+            split = 'train' if train else 'val'
+            self.full_dataset = datasets.ImageFolder(os.path.join(root, split))
+
         self.transform = transform
-        
+
         # Create subset indices
         if subset_size is not None and train:
             self.indices = self._create_subset_indices(subset_size)
@@ -122,13 +187,14 @@ class SubsetImageNet1K(Dataset):
 
 
 
-def get_dataloaders(data_path, batch_size=128, image_size=64, num_workers=2, 
+def get_dataloaders(data_path, batch_size=128, image_size=64, num_workers=2,
                    subset_size=None, val_subset_size=None, use_subset=False):
     """
     Create train and validation dataloaders for ImageNet 1K
+    Supports both ILSVRC structure and simple train/val structure
 
     Args:
-        data_path: Path to ImageNet dataset directory
+        data_path: Path to ImageNet dataset directory (ILSVRC root or parent dir with train/val)
         batch_size: Batch size for training
         image_size: Target image size (64, 128, or 224)
         num_workers: Number of worker processes
@@ -139,18 +205,35 @@ def get_dataloaders(data_path, batch_size=128, image_size=64, num_workers=2,
     train_tfms = get_train_transforms(image_size)
     val_tfms = get_val_transforms(image_size)
 
+    # Check if we have ILSVRC structure with val.txt
+    val_txt_path = os.path.join(data_path, 'ImageSets', 'CLS-LOC', 'val.txt')
+    val_dir = os.path.join(data_path, 'Data', 'CLS-LOC', 'val')
+    use_val_txt = os.path.exists(val_txt_path) and os.path.exists(val_dir)
+
     if use_subset and subset_size is not None:
         print(f"Creating subset datasets:")
         print(f"  Training subset size: {subset_size}")
         print(f"  Validation subset size: {val_subset_size or 'full'}")
-        
-        train_ds = SubsetImageNet1K(root=data_path, train=True, transform=train_tfms, 
+
+        train_ds = SubsetImageNet1K(root=data_path, train=True, transform=train_tfms,
                                    subset_size=subset_size)
-        val_ds = SubsetImageNet1K(root=data_path, train=False, transform=val_tfms,
-                                 val_subset_size=val_subset_size)
+
+        # For validation, use ImageNetVal if val.txt exists, otherwise use SubsetImageNet1K
+        if use_val_txt and val_subset_size is None:
+            # Use val.txt for full validation set
+            val_ds = ImageNetVal(val_dir, val_txt_path, transform=val_tfms)
+        else:
+            # Use subset for validation
+            val_ds = SubsetImageNet1K(root=data_path, train=False, transform=val_tfms,
+                                     val_subset_size=val_subset_size)
     else:
         train_ds = AlbuImageNet1K(root=data_path, train=True, transform=train_tfms)
-        val_ds = AlbuImageNet1K(root=data_path, train=False, transform=val_tfms)
+
+        # For validation, prefer ImageNetVal if val.txt exists
+        if use_val_txt:
+            val_ds = ImageNetVal(val_dir, val_txt_path, transform=val_tfms)
+        else:
+            val_ds = AlbuImageNet1K(root=data_path, train=False, transform=val_tfms)
 
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
                              num_workers=num_workers, pin_memory=True, persistent_workers=True)
