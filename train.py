@@ -115,8 +115,25 @@ def train_worker(rank, world_size, args):
     if is_main_process:
         print("Device:", device)
 
-    # Create model with less regularization
-    model = resnet50(num_classes=1000, drop_path_rate=args.drop_path_rate, use_blurpool=args.use_blurpool).to(device)
+    # Determine number of classes
+    # If using a subset, we need to check how many classes are actually in the subset
+    if args.subset:
+        from dataloader import SubsetImageNet1K, get_train_transforms
+        # Create a temporary dataset to get the number of classes
+        temp_ds = SubsetImageNet1K(
+            root=args.data_dir,
+            train=True,
+            transform=None,
+            subset_size=args.subset_size
+        )
+        num_classes = temp_ds.get_num_classes()
+        if is_main_process:
+            print(f"Using subset with {num_classes} classes (from {args.subset_size} samples)")
+    else:
+        num_classes = 1000  # Full ImageNet
+
+    # Create model with correct number of classes
+    model = resnet50(num_classes=num_classes, drop_path_rate=args.drop_path_rate, use_blurpool=args.use_blurpool).to(device)
 
     # Wrap model with DDP if enabled
     if args.ddp:

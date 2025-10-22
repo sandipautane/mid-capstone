@@ -131,6 +131,9 @@ class SubsetImageNet1K(Dataset):
 
         self.transform = transform
 
+        # Initialize label mapping as identity (no remapping by default)
+        self.label_mapping = None
+
         # Create subset indices
         if subset_size is not None and train:
             self.indices = self._create_subset_indices(subset_size)
@@ -140,33 +143,39 @@ class SubsetImageNet1K(Dataset):
             self.indices = list(range(len(self.full_dataset)))
     
     def _create_subset_indices(self, subset_size):
-        """Create balanced subset indices across all classes"""
+        """Create balanced subset indices across all classes and create label remapping"""
         # Get class indices
         class_indices = {}
         for idx, (_, label) in enumerate(self.full_dataset.samples):
             if label not in class_indices:
                 class_indices[label] = []
             class_indices[label].append(idx)
-        
+
         # Calculate samples per class
         num_classes = len(class_indices)
         samples_per_class = subset_size // num_classes
         remaining_samples = subset_size % num_classes
-        
+
         subset_indices = []
+        used_classes = []
         for i, (label, indices) in enumerate(class_indices.items()):
             # Add extra sample to first few classes if there are remaining samples
             class_size = samples_per_class + (1 if i < remaining_samples else 0)
-            
+
             # Randomly sample indices for this class
             if len(indices) >= class_size:
                 sampled_indices = random.sample(indices, class_size)
             else:
                 # If class has fewer samples than needed, use all samples
                 sampled_indices = indices
-            
+
             subset_indices.extend(sampled_indices)
-        
+            used_classes.append(label)
+
+        # Create label mapping from original labels to contiguous range [0, num_classes)
+        # This is CRITICAL to avoid out-of-bounds errors when using subsets
+        self.label_mapping = {original_label: new_label for new_label, original_label in enumerate(sorted(used_classes))}
+
         # Shuffle the final indices
         random.shuffle(subset_indices)
         return subset_indices
@@ -180,7 +189,19 @@ class SubsetImageNet1K(Dataset):
         img = np.array(img)        # -> HWC uint8 RGB
         if self.transform is not None:
             img = self.transform(image=img)["image"]
+
+        # Remap label if we're using a subset
+        if self.label_mapping is not None:
+            label = self.label_mapping[label]
+
         return img, label
+
+    def get_num_classes(self):
+        """Return the actual number of classes in this subset"""
+        if self.label_mapping is not None:
+            return len(self.label_mapping)
+        else:
+            return len(self.full_dataset.classes)
 
 
 
