@@ -150,7 +150,7 @@ def calculate_total_steps(epochs):
     return total_steps
 
 # Use it
-total_steps = calculate_total_steps(100)  # For 100 epochs
+#total_steps = calculate_total_steps(100)  # For 100 epochs
 
 
 def get_image_size_for_epoch(epoch):
