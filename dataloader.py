@@ -56,8 +56,52 @@ class ImageNetVal(Dataset):
         self.samples = []
         with open(val_txt_path, 'r') as f:
             for line in f:
-                img_name, class_idx = line.strip().split()
+                line = line.strip()
+                if not line:  # Skip empty lines
+                    continue
+                parts = line.split()
+                if len(parts) != 2:
+                    continue
+                img_name, class_idx = parts
                 img_path = os.path.join(val_dir, img_name + '.JPEG')
+                self.samples.append((img_path, int(class_idx) - 1))  # Convert to 0-indexed
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        img_path, label = self.samples[idx]
+        img = Image.open(img_path).convert('RGB')
+        img = np.array(img)
+
+        if self.transform is not None:
+            img = self.transform(image=img)["image"]
+
+        return img, label
+
+
+class ImageNetTrain(Dataset):
+    """
+    Custom training dataset for ImageNet that reads from train_cls.txt
+    Supports ILSVRC structure with train_cls.txt
+    """
+    def __init__(self, train_dir, train_txt_path, transform=None):
+        self.train_dir = train_dir
+        self.transform = transform
+
+        # Read train_cls.txt to create mapping
+        self.samples = []
+        with open(train_txt_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line:  # Skip empty lines
+                    continue
+                parts = line.split()
+                if len(parts) != 2:
+                    continue
+                img_path_rel, class_idx = parts
+                # train_cls.txt format: n01440764/n01440764_10026 1
+                img_path = os.path.join(train_dir, img_path_rel + '.JPEG')
                 self.samples.append((img_path, int(class_idx) - 1))  # Convert to 0-indexed
 
     def __len__(self):
@@ -182,26 +226,27 @@ class SubsetImageNet1K(Dataset):
     
     def __len__(self):
         return len(self.indices)
-    
-    def __getitem__(self, idx):
-        actual_idx = self.indices[idx]
-        img, label = self.full_dataset[actual_idx]  # PIL Image
-        img = np.array(img)        # -> HWC uint8 RGB
-        if self.transform is not None:
-            img = self.transform(image=img)["image"]
-
-        # Remap label if we're using a subset
-        if self.label_mapping is not None:
-            label = self.label_mapping[label]
-
-        return img, label
 
     def get_num_classes(self):
-        """Return the actual number of classes in this subset"""
+        """Return the number of classes in the subset"""
         if self.label_mapping is not None:
             return len(self.label_mapping)
         else:
+            # Return number of classes in full dataset
             return len(self.full_dataset.classes)
+
+    def __getitem__(self, idx):
+        actual_idx = self.indices[idx]
+        img, label = self.full_dataset[actual_idx]  # PIL Image
+
+        # Apply label remapping if it exists
+        if self.label_mapping is not None:
+            label = self.label_mapping[label]
+
+        img = np.array(img)        # -> HWC uint8 RGB
+        if self.transform is not None:
+            img = self.transform(image=img)["image"]
+        return img, label
 
 
 
@@ -226,9 +271,12 @@ def get_dataloaders(data_path, batch_size=128, image_size=64, num_workers=2,
     train_tfms = get_train_transforms(image_size)
     val_tfms = get_val_transforms(image_size)
 
-    # Check if we have ILSVRC structure with val.txt
+    # Check if we have ILSVRC structure with train_cls.txt and val.txt
+    train_txt_path = os.path.join(data_path, 'ImageSets', 'CLS-LOC', 'train_cls.txt')
     val_txt_path = os.path.join(data_path, 'ImageSets', 'CLS-LOC', 'val.txt')
+    train_dir = os.path.join(data_path, 'Data', 'CLS-LOC', 'train')
     val_dir = os.path.join(data_path, 'Data', 'CLS-LOC', 'val')
+    use_train_txt = os.path.exists(train_txt_path) and os.path.exists(train_dir)
     use_val_txt = os.path.exists(val_txt_path) and os.path.exists(val_dir)
 
     if use_subset and subset_size is not None:
@@ -248,10 +296,16 @@ def get_dataloaders(data_path, batch_size=128, image_size=64, num_workers=2,
             val_ds = SubsetImageNet1K(root=data_path, train=False, transform=val_tfms,
                                      val_subset_size=val_subset_size)
     else:
-        train_ds = AlbuImageNet1K(root=data_path, train=True, transform=train_tfms)
+        # For training, prefer ImageNetTrain if train_cls.txt exists
+        if use_train_txt:
+            print(f"Using train_cls.txt for training data")
+            train_ds = ImageNetTrain(train_dir, train_txt_path, transform=train_tfms)
+        else:
+            train_ds = AlbuImageNet1K(root=data_path, train=True, transform=train_tfms)
 
         # For validation, prefer ImageNetVal if val.txt exists
         if use_val_txt:
+            print(f"Using val.txt for validation data")
             val_ds = ImageNetVal(val_dir, val_txt_path, transform=val_tfms)
         else:
             val_ds = AlbuImageNet1K(root=data_path, train=False, transform=val_tfms)

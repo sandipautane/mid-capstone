@@ -46,14 +46,17 @@ def get_ddp_dataloaders(data_path, batch_size=128, image_size=64, num_workers=2,
     Create train and validation dataloaders with DistributedSampler for DDP
     Supports both ILSVRC structure and simple train/val structure
     """
-    from dataloader import get_train_transforms, get_val_transforms, SubsetImageNet1K, AlbuImageNet1K, ImageNetVal
+    from dataloader import get_train_transforms, get_val_transforms, SubsetImageNet1K, AlbuImageNet1K, ImageNetVal, ImageNetTrain
 
     train_tfms = get_train_transforms(image_size)
     val_tfms = get_val_transforms(image_size)
 
-    # Check if we have ILSVRC structure with val.txt
+    # Check if we have ILSVRC structure with train_cls.txt and val.txt
+    train_txt_path = os.path.join(data_path, 'ImageSets', 'CLS-LOC', 'train_cls.txt')
     val_txt_path = os.path.join(data_path, 'ImageSets', 'CLS-LOC', 'val.txt')
+    train_dir = os.path.join(data_path, 'Data', 'CLS-LOC', 'train')
     val_dir = os.path.join(data_path, 'Data', 'CLS-LOC', 'val')
+    use_train_txt = os.path.exists(train_txt_path) and os.path.exists(train_dir)
     use_val_txt = os.path.exists(val_txt_path) and os.path.exists(val_dir)
 
     if use_subset and subset_size is not None:
@@ -74,10 +77,18 @@ def get_ddp_dataloaders(data_path, batch_size=128, image_size=64, num_workers=2,
             val_ds = SubsetImageNet1K(root=data_path, train=False, transform=val_tfms,
                                      val_subset_size=val_subset_size)
     else:
-        train_ds = AlbuImageNet1K(root=data_path, train=True, transform=train_tfms)
+        # For training, prefer ImageNetTrain if train_cls.txt exists
+        if use_train_txt:
+            if rank == 0:
+                print(f"Using train_cls.txt for training data")
+            train_ds = ImageNetTrain(train_dir, train_txt_path, transform=train_tfms)
+        else:
+            train_ds = AlbuImageNet1K(root=data_path, train=True, transform=train_tfms)
 
         # For validation, prefer ImageNetVal if val.txt exists
         if use_val_txt:
+            if rank == 0:
+                print(f"Using val.txt for validation data")
             val_ds = ImageNetVal(val_dir, val_txt_path, transform=val_tfms)
         else:
             val_ds = AlbuImageNet1K(root=data_path, train=False, transform=val_tfms)
