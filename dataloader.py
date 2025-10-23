@@ -48,12 +48,15 @@ class ImageNetVal(Dataset):
     Custom validation dataset for ImageNet that reads from val.txt
     Supports both ILSVRC structure and simple train/val structure
     """
-    def __init__(self, val_dir, val_txt_path, transform=None):
+    def __init__(self, val_dir, val_txt_path, transform=None, label_mapping=None):
         self.val_dir = val_dir
         self.transform = transform
+        self.label_mapping = label_mapping
 
         # Read val.txt to create mapping
         self.samples = []
+        unique_labels = set()
+
         with open(val_txt_path, 'r') as f:
             for line in f:
                 line = line.strip()
@@ -64,13 +67,36 @@ class ImageNetVal(Dataset):
                     continue
                 img_name, class_idx = parts
                 img_path = os.path.join(val_dir, img_name + '.JPEG')
-                self.samples.append((img_path, int(class_idx) - 1))  # Convert to 0-indexed
+                original_label = int(class_idx) - 1  # Convert to 0-indexed
+                self.samples.append((img_path, original_label))
+                unique_labels.add(original_label)
+
+        # If no label mapping provided, create one
+        if self.label_mapping is None:
+            self.label_mapping = {original_label: new_label
+                                 for new_label, original_label in enumerate(sorted(unique_labels))}
+        self.num_classes = len(self.label_mapping)
+
+        print(f"ImageNetVal: Found {len(self.samples)} samples with {self.num_classes} classes")
+        print(f"Label range: {min(unique_labels)} to {max(unique_labels)}")
 
     def __len__(self):
         return len(self.samples)
 
+    def get_num_classes(self):
+        """Return the number of classes in the dataset"""
+        return self.num_classes
+
     def __getitem__(self, idx):
         img_path, label = self.samples[idx]
+
+        # Remap label to contiguous range
+        if label in self.label_mapping:
+            label = self.label_mapping[label]
+        else:
+            # If label not in mapping, skip or handle error
+            raise ValueError(f"Label {label} not found in label mapping")
+
         img = Image.open(img_path).convert('RGB')
         img = np.array(img)
 
@@ -91,6 +117,8 @@ class ImageNetTrain(Dataset):
 
         # Read train_cls.txt to create mapping
         self.samples = []
+        unique_labels = set()
+
         with open(train_txt_path, 'r') as f:
             for line in f:
                 line = line.strip()
@@ -102,13 +130,31 @@ class ImageNetTrain(Dataset):
                 img_path_rel, class_idx = parts
                 # train_cls.txt format: n01440764/n01440764_10026 1
                 img_path = os.path.join(train_dir, img_path_rel + '.JPEG')
-                self.samples.append((img_path, int(class_idx) - 1))  # Convert to 0-indexed
+                original_label = int(class_idx) - 1  # Convert to 0-indexed
+                self.samples.append((img_path, original_label))
+                unique_labels.add(original_label)
+
+        # Create label remapping to ensure contiguous range [0, num_classes)
+        self.label_mapping = {original_label: new_label
+                             for new_label, original_label in enumerate(sorted(unique_labels))}
+        self.num_classes = len(self.label_mapping)
+
+        print(f"ImageNetTrain: Found {len(self.samples)} samples with {self.num_classes} classes")
+        print(f"Label range: {min(unique_labels)} to {max(unique_labels)}")
 
     def __len__(self):
         return len(self.samples)
 
+    def get_num_classes(self):
+        """Return the number of classes in the dataset"""
+        return self.num_classes
+
     def __getitem__(self, idx):
         img_path, label = self.samples[idx]
+
+        # Remap label to contiguous range
+        label = self.label_mapping[label]
+
         img = Image.open(img_path).convert('RGB')
         img = np.array(img)
 
@@ -146,6 +192,10 @@ class AlbuImageNet1K(Dataset):
 
     def __len__(self):
         return len(self.ds)
+
+    def get_num_classes(self):
+        """Return the number of classes in the dataset"""
+        return len(self.ds.classes)
 
     def __getitem__(self, idx):
         img, label = self.ds[idx]  # PIL Image
@@ -289,8 +339,9 @@ def get_dataloaders(data_path, batch_size=128, image_size=64, num_workers=2,
 
         # For validation, use ImageNetVal if val.txt exists, otherwise use SubsetImageNet1K
         if use_val_txt and val_subset_size is None:
-            # Use val.txt for full validation set
-            val_ds = ImageNetVal(val_dir, val_txt_path, transform=val_tfms)
+            # Use val.txt for full validation set - share label mapping with train
+            val_ds = ImageNetVal(val_dir, val_txt_path, transform=val_tfms,
+                               label_mapping=train_ds.label_mapping)
         else:
             # Use subset for validation
             val_ds = SubsetImageNet1K(root=data_path, train=False, transform=val_tfms,
@@ -306,7 +357,10 @@ def get_dataloaders(data_path, batch_size=128, image_size=64, num_workers=2,
         # For validation, prefer ImageNetVal if val.txt exists
         if use_val_txt:
             print(f"Using val.txt for validation data")
-            val_ds = ImageNetVal(val_dir, val_txt_path, transform=val_tfms)
+            # Share label mapping with training dataset
+            label_mapping = getattr(train_ds, 'label_mapping', None)
+            val_ds = ImageNetVal(val_dir, val_txt_path, transform=val_tfms,
+                               label_mapping=label_mapping)
         else:
             val_ds = AlbuImageNet1K(root=data_path, train=False, transform=val_tfms)
 
@@ -315,7 +369,7 @@ def get_dataloaders(data_path, batch_size=128, image_size=64, num_workers=2,
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
                            num_workers=num_workers, pin_memory=True, persistent_workers=True)
 
-    return train_loader, val_loader
+    return train_loader, val_loader, train_ds
 
 
 def get_subset_dataloaders(data_path, subset_size=10000, batch_size=128, image_size=64, num_workers=2):

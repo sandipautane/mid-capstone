@@ -70,8 +70,9 @@ def get_ddp_dataloaders(data_path, batch_size=128, image_size=64, num_workers=2,
 
         # For validation, use ImageNetVal if val.txt exists, otherwise use SubsetImageNet1K
         if use_val_txt and val_subset_size is None:
-            # Use val.txt for full validation set
-            val_ds = ImageNetVal(val_dir, val_txt_path, transform=val_tfms)
+            # Use val.txt for full validation set - share label mapping with train
+            val_ds = ImageNetVal(val_dir, val_txt_path, transform=val_tfms,
+                               label_mapping=train_ds.label_mapping)
         else:
             # Use subset for validation
             val_ds = SubsetImageNet1K(root=data_path, train=False, transform=val_tfms,
@@ -89,7 +90,10 @@ def get_ddp_dataloaders(data_path, batch_size=128, image_size=64, num_workers=2,
         if use_val_txt:
             if rank == 0:
                 print(f"Using val.txt for validation data")
-            val_ds = ImageNetVal(val_dir, val_txt_path, transform=val_tfms)
+            # Share label mapping with training dataset
+            label_mapping = getattr(train_ds, 'label_mapping', None)
+            val_ds = ImageNetVal(val_dir, val_txt_path, transform=val_tfms,
+                               label_mapping=label_mapping)
         else:
             val_ds = AlbuImageNet1K(root=data_path, train=False, transform=val_tfms)
 
@@ -107,7 +111,7 @@ def get_ddp_dataloaders(data_path, batch_size=128, image_size=64, num_workers=2,
         num_workers=num_workers, pin_memory=True, persistent_workers=True
     )
 
-    return train_loader, val_loader, train_sampler, val_sampler
+    return train_loader, val_loader, train_sampler, val_sampler, train_ds
 
 
 
@@ -126,22 +130,47 @@ def train_worker(rank, world_size, args):
     if is_main_process:
         print("Device:", device)
 
-    # Determine number of classes
-    # If using a subset, we need to check how many classes are actually in the subset
-    if args.subset:
-        from dataloader import SubsetImageNet1K, get_train_transforms
-        # Create a temporary dataset to get the number of classes
-        temp_ds = SubsetImageNet1K(
-            root=args.data_dir,
-            train=True,
-            transform=None,
-            subset_size=args.subset_size
+    # Create initial dataloaders to determine number of classes
+    initial_size = get_image_size_for_epoch(1)
+    batch_size = get_batch_size(initial_size)
+
+    if args.ddp:
+        _, _, _, _, train_ds = get_ddp_dataloaders(
+            args.data_dir,
+            batch_size=batch_size,
+            image_size=initial_size,
+            num_workers=args.num_workers,
+            subset_size=args.subset_size if args.subset else None,
+            val_subset_size=args.subset_size // 10 if args.subset else None,
+            use_subset=args.subset,
+            rank=rank,
+            world_size=world_size
         )
-        num_classes = temp_ds.get_num_classes()
-        if is_main_process:
-            print(f"Using subset with {num_classes} classes (from {args.subset_size} samples)")
     else:
-        num_classes = 1000  # Full ImageNet
+        from dataloader import get_dataloaders, get_train_transforms, SubsetImageNet1K, ImageNetTrain
+
+        # Create temporary dataset to get number of classes
+        if args.subset:
+            train_ds = SubsetImageNet1K(
+                root=args.data_dir,
+                train=True,
+                transform=None,
+                subset_size=args.subset_size
+            )
+        else:
+            # Check if we have train_cls.txt
+            train_txt_path = os.path.join(args.data_dir, 'ImageSets', 'CLS-LOC', 'train_cls.txt')
+            train_dir = os.path.join(args.data_dir, 'Data', 'CLS-LOC', 'train')
+            if os.path.exists(train_txt_path) and os.path.exists(train_dir):
+                train_ds = ImageNetTrain(train_dir, train_txt_path, transform=None)
+            else:
+                from dataloader import AlbuImageNet1K
+                train_ds = AlbuImageNet1K(root=args.data_dir, train=True, transform=None)
+
+    # Get number of classes from dataset
+    num_classes = getattr(train_ds, 'get_num_classes', lambda: 1000)()
+    if is_main_process:
+        print(f"Dataset has {num_classes} classes")
 
     # Create model with correct number of classes
     model = resnet50(num_classes=num_classes, drop_path_rate=args.drop_path_rate, use_blurpool=args.use_blurpool).to(device)
@@ -192,7 +221,7 @@ def train_worker(rank, world_size, args):
 
             # Recreate dataloaders with new size
             if args.ddp:
-                train_loader, val_loader, train_sampler, val_sampler = get_ddp_dataloaders(
+                train_loader, val_loader, train_sampler, val_sampler, train_ds = get_ddp_dataloaders(
                     args.data_dir,
                     batch_size=batch_size,
                     image_size=new_size,
@@ -204,7 +233,8 @@ def train_worker(rank, world_size, args):
                     world_size=world_size
                 )
             else:
-                train_loader, val_loader = get_dataloaders(
+                from dataloader import get_dataloaders
+                train_loader, val_loader, _ = get_dataloaders(
                     args.data_dir,
                     batch_size=batch_size,
                     image_size=new_size,
