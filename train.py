@@ -51,13 +51,13 @@ def get_ddp_dataloaders(data_path, batch_size=128, image_size=64, num_workers=2,
     train_tfms = get_train_transforms(image_size)
     val_tfms = get_val_transforms(image_size)
 
-    # Check if we have ILSVRC structure with train_cls.txt and val.txt
-    train_txt_path = os.path.join(data_path, 'ImageSets', 'CLS-LOC', 'train_cls.txt')
-    val_txt_path = os.path.join(data_path, 'ImageSets', 'CLS-LOC', 'val.txt')
+    # Check if we have ILSVRC structure with Annotations
+    train_annotations_dir = os.path.join(data_path, 'Annotations', 'CLS-LOC', 'train')
+    val_annotations_dir = os.path.join(data_path, 'Annotations', 'CLS-LOC', 'val')
     train_dir = os.path.join(data_path, 'Data', 'CLS-LOC', 'train')
     val_dir = os.path.join(data_path, 'Data', 'CLS-LOC', 'val')
-    use_train_txt = os.path.exists(train_txt_path) and os.path.exists(train_dir)
-    use_val_txt = os.path.exists(val_txt_path) and os.path.exists(val_dir)
+    use_train_annotations = os.path.exists(train_annotations_dir) and os.path.exists(train_dir)
+    use_val_annotations = os.path.exists(val_annotations_dir) and os.path.exists(val_dir)
 
     if use_subset and subset_size is not None:
         if rank == 0:
@@ -68,32 +68,32 @@ def get_ddp_dataloaders(data_path, batch_size=128, image_size=64, num_workers=2,
         train_ds = SubsetImageNet1K(root=data_path, train=True, transform=train_tfms,
                                    subset_size=subset_size)
 
-        # For validation, use ImageNetVal if val.txt exists, otherwise use SubsetImageNet1K
-        if use_val_txt and val_subset_size is None:
-            # Use val.txt for full validation set - share label mapping with train
-            val_ds = ImageNetVal(val_dir, val_txt_path, transform=val_tfms,
-                               label_mapping=train_ds.label_mapping)
+        # For validation, use ImageNetVal if annotations exist, otherwise use SubsetImageNet1K
+        if use_val_annotations and val_subset_size is None:
+            # Use annotations for full validation set - share synset mapping with train
+            val_ds = ImageNetVal(val_dir, val_annotations_dir, transform=val_tfms,
+                               synset_to_idx=train_ds.label_mapping)
         else:
             # Use subset for validation
             val_ds = SubsetImageNet1K(root=data_path, train=False, transform=val_tfms,
                                      val_subset_size=val_subset_size)
     else:
-        # For training, prefer ImageNetTrain if train_cls.txt exists
-        if use_train_txt:
+        # For training, prefer ImageNetTrain if annotations exist
+        if use_train_annotations:
             if rank == 0:
-                print(f"Using train_cls.txt for training data")
-            train_ds = ImageNetTrain(train_dir, train_txt_path, transform=train_tfms)
+                print(f"Using XML annotations for training data")
+            train_ds = ImageNetTrain(train_dir, train_annotations_dir, transform=train_tfms)
         else:
             train_ds = AlbuImageNet1K(root=data_path, train=True, transform=train_tfms)
 
-        # For validation, prefer ImageNetVal if val.txt exists
-        if use_val_txt:
+        # For validation, prefer ImageNetVal if annotations exist
+        if use_val_annotations:
             if rank == 0:
-                print(f"Using val.txt for validation data")
-            # Share label mapping with training dataset
-            label_mapping = getattr(train_ds, 'label_mapping', None)
-            val_ds = ImageNetVal(val_dir, val_txt_path, transform=val_tfms,
-                               label_mapping=label_mapping)
+                print(f"Using XML annotations for validation data")
+            # Share synset mapping with training dataset
+            synset_to_idx = getattr(train_ds, 'synset_to_idx', None)
+            val_ds = ImageNetVal(val_dir, val_annotations_dir, transform=val_tfms,
+                               synset_to_idx=synset_to_idx)
         else:
             val_ds = AlbuImageNet1K(root=data_path, train=False, transform=val_tfms)
 
@@ -158,11 +158,11 @@ def train_worker(rank, world_size, args):
                 subset_size=args.subset_size
             )
         else:
-            # Check if we have train_cls.txt
-            train_txt_path = os.path.join(args.data_dir, 'ImageSets', 'CLS-LOC', 'train_cls.txt')
+            # Check if we have Annotations
+            train_annotations_dir = os.path.join(args.data_dir, 'Annotations', 'CLS-LOC', 'train')
             train_dir = os.path.join(args.data_dir, 'Data', 'CLS-LOC', 'train')
-            if os.path.exists(train_txt_path) and os.path.exists(train_dir):
-                train_ds = ImageNetTrain(train_dir, train_txt_path, transform=None)
+            if os.path.exists(train_annotations_dir) and os.path.exists(train_dir):
+                train_ds = ImageNetTrain(train_dir, train_annotations_dir, transform=None)
             else:
                 from dataloader import AlbuImageNet1K
                 train_ds = AlbuImageNet1K(root=args.data_dir, train=True, transform=None)

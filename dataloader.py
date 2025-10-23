@@ -13,6 +13,7 @@ import numpy as np
 from PIL import Image
 import os
 import random
+import xml.etree.ElementTree as ET
 
 # ImageNet normalization stats (standard for ImageNet-based datasets)
 #TODO: change this to  imagenet normalization stats 
@@ -45,40 +46,63 @@ def get_val_transforms(image_size=64):
 
 class ImageNetVal(Dataset):
     """
-    Custom validation dataset for ImageNet that reads from val.txt
-    Supports both ILSVRC structure and simple train/val structure
+    Custom validation dataset for ImageNet that reads from XML annotations
+    Supports ILSVRC structure with Annotations/CLS-LOC/val
     """
-    def __init__(self, val_dir, val_txt_path, transform=None, label_mapping=None):
+    def __init__(self, val_dir, annotations_dir, transform=None, synset_to_idx=None):
+        """
+        Args:
+            val_dir: Path to validation images (e.g., Data/CLS-LOC/val)
+            annotations_dir: Path to validation annotations (e.g., Annotations/CLS-LOC/val)
+            transform: Albumentations transform
+            synset_to_idx: Optional mapping from synset to index (shared from training set)
+        """
         self.val_dir = val_dir
+        self.annotations_dir = annotations_dir
         self.transform = transform
-        self.label_mapping = label_mapping
 
-        # Read val.txt to create mapping
+        # Collect all XML files and extract class labels
         self.samples = []
-        unique_labels = set()
+        synset_names = set()
 
-        with open(val_txt_path, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if not line:  # Skip empty lines
-                    continue
-                parts = line.split()
-                if len(parts) != 2:
-                    continue
-                img_name, class_idx = parts
-                img_path = os.path.join(val_dir, img_name + '.JPEG')
-                original_label = int(class_idx) - 1  # Convert to 0-indexed
-                self.samples.append((img_path, original_label))
-                unique_labels.add(original_label)
+        # Process each XML file in the annotations directory
+        for xml_file in sorted(os.listdir(annotations_dir)):
+            if not xml_file.endswith('.xml'):
+                continue
 
-        # If no label mapping provided, create one
-        if self.label_mapping is None:
-            self.label_mapping = {original_label: new_label
-                                 for new_label, original_label in enumerate(sorted(unique_labels))}
-        self.num_classes = len(self.label_mapping)
+            xml_path = os.path.join(annotations_dir, xml_file)
+
+            # Parse XML to get class label
+            try:
+                tree = ET.parse(xml_path)
+                root = tree.getroot()
+
+                # Get the class name from the first object
+                obj = root.find('object')
+                if obj is not None:
+                    class_name = obj.find('name').text
+                    synset_names.add(class_name)
+
+                    # Get image filename
+                    filename = root.find('filename').text
+                    img_path = os.path.join(val_dir, filename + '.JPEG')
+
+                    self.samples.append((img_path, class_name))
+            except Exception as e:
+                print(f"Warning: Could not parse {xml_path}: {e}")
+                continue
+
+        # Use provided synset_to_idx or create new one
+        if synset_to_idx is not None:
+            self.synset_to_idx = synset_to_idx
+        else:
+            # Create synset to index mapping (sorted for consistency)
+            unique_synsets = sorted(synset_names)
+            self.synset_to_idx = {synset: idx for idx, synset in enumerate(unique_synsets)}
+
+        self.num_classes = len(self.synset_to_idx)
 
         print(f"ImageNetVal: Found {len(self.samples)} samples with {self.num_classes} classes")
-        print(f"Label range: {min(unique_labels)} to {max(unique_labels)}")
 
     def __len__(self):
         return len(self.samples)
@@ -88,14 +112,13 @@ class ImageNetVal(Dataset):
         return self.num_classes
 
     def __getitem__(self, idx):
-        img_path, label = self.samples[idx]
+        img_path, synset = self.samples[idx]
 
-        # Remap label to contiguous range
-        if label in self.label_mapping:
-            label = self.label_mapping[label]
-        else:
-            # If label not in mapping, skip or handle error
-            raise ValueError(f"Label {label} not found in label mapping")
+        # Convert synset to class index
+        if synset not in self.synset_to_idx:
+            raise ValueError(f"Synset {synset} not found in synset_to_idx mapping")
+
+        label = self.synset_to_idx[synset]
 
         img = Image.open(img_path).convert('RGB')
         img = np.array(img)
@@ -108,39 +131,65 @@ class ImageNetVal(Dataset):
 
 class ImageNetTrain(Dataset):
     """
-    Custom training dataset for ImageNet that reads from train_cls.txt
-    Supports ILSVRC structure with train_cls.txt
+    Custom training dataset for ImageNet that reads from XML annotations
+    Supports ILSVRC structure with Annotations/CLS-LOC/train
     """
-    def __init__(self, train_dir, train_txt_path, transform=None):
+    def __init__(self, train_dir, annotations_dir, transform=None):
+        """
+        Args:
+            train_dir: Path to training images (e.g., Data/CLS-LOC/train)
+            annotations_dir: Path to training annotations (e.g., Annotations/CLS-LOC/train)
+            transform: Albumentations transform
+        """
         self.train_dir = train_dir
+        self.annotations_dir = annotations_dir
         self.transform = transform
 
-        # Read train_cls.txt to create mapping
+        # Collect all XML files and extract class labels
         self.samples = []
-        unique_labels = set()
+        synset_names = set()
 
-        with open(train_txt_path, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if not line:  # Skip empty lines
-                    continue
-                parts = line.split()
-                if len(parts) != 2:
-                    continue
-                img_path_rel, class_idx = parts
-                # train_cls.txt format: n01440764/n01440764_10026 1
-                img_path = os.path.join(train_dir, img_path_rel + '.JPEG')
-                original_label = int(class_idx) - 1  # Convert to 0-indexed
-                self.samples.append((img_path, original_label))
-                unique_labels.add(original_label)
+        # Walk through annotation directory structure
+        for synset in sorted(os.listdir(annotations_dir)):
+            synset_dir = os.path.join(annotations_dir, synset)
+            if not os.path.isdir(synset_dir):
+                continue
 
-        # Create label remapping to ensure contiguous range [0, num_classes)
-        self.label_mapping = {original_label: new_label
-                             for new_label, original_label in enumerate(sorted(unique_labels))}
-        self.num_classes = len(self.label_mapping)
+            synset_names.add(synset)
+
+            # Process each XML file in this synset directory
+            for xml_file in os.listdir(synset_dir):
+                if not xml_file.endswith('.xml'):
+                    continue
+
+                xml_path = os.path.join(synset_dir, xml_file)
+
+                # Parse XML to get class label
+                try:
+                    tree = ET.parse(xml_path)
+                    root = tree.getroot()
+
+                    # Get the class name from the first object
+                    obj = root.find('object')
+                    if obj is not None:
+                        class_name = obj.find('name').text
+
+                        # Get image filename
+                        filename = root.find('filename').text
+                        img_path = os.path.join(train_dir, synset, filename + '.JPEG')
+
+                        self.samples.append((img_path, class_name))
+                except Exception as e:
+                    print(f"Warning: Could not parse {xml_path}: {e}")
+                    continue
+
+        # Create synset to index mapping (sorted for consistency)
+        unique_synsets = sorted(synset_names)
+        self.synset_to_idx = {synset: idx for idx, synset in enumerate(unique_synsets)}
+        self.num_classes = len(self.synset_to_idx)
 
         print(f"ImageNetTrain: Found {len(self.samples)} samples with {self.num_classes} classes")
-        print(f"Label range: {min(unique_labels)} to {max(unique_labels)}")
+        print(f"Classes: {unique_synsets[:5]}... (showing first 5)")
 
     def __len__(self):
         return len(self.samples)
@@ -150,10 +199,10 @@ class ImageNetTrain(Dataset):
         return self.num_classes
 
     def __getitem__(self, idx):
-        img_path, label = self.samples[idx]
+        img_path, synset = self.samples[idx]
 
-        # Remap label to contiguous range
-        label = self.label_mapping[label]
+        # Convert synset to class index
+        label = self.synset_to_idx[synset]
 
         img = Image.open(img_path).convert('RGB')
         img = np.array(img)
@@ -321,13 +370,13 @@ def get_dataloaders(data_path, batch_size=128, image_size=64, num_workers=2,
     train_tfms = get_train_transforms(image_size)
     val_tfms = get_val_transforms(image_size)
 
-    # Check if we have ILSVRC structure with train_cls.txt and val.txt
-    train_txt_path = os.path.join(data_path, 'ImageSets', 'CLS-LOC', 'train_cls.txt')
-    val_txt_path = os.path.join(data_path, 'ImageSets', 'CLS-LOC', 'val.txt')
+    # Check if we have ILSVRC structure with Annotations
+    train_annotations_dir = os.path.join(data_path, 'Annotations', 'CLS-LOC', 'train')
+    val_annotations_dir = os.path.join(data_path, 'Annotations', 'CLS-LOC', 'val')
     train_dir = os.path.join(data_path, 'Data', 'CLS-LOC', 'train')
     val_dir = os.path.join(data_path, 'Data', 'CLS-LOC', 'val')
-    use_train_txt = os.path.exists(train_txt_path) and os.path.exists(train_dir)
-    use_val_txt = os.path.exists(val_txt_path) and os.path.exists(val_dir)
+    use_train_annotations = os.path.exists(train_annotations_dir) and os.path.exists(train_dir)
+    use_val_annotations = os.path.exists(val_annotations_dir) and os.path.exists(val_dir)
 
     if use_subset and subset_size is not None:
         print(f"Creating subset datasets:")
@@ -337,30 +386,30 @@ def get_dataloaders(data_path, batch_size=128, image_size=64, num_workers=2,
         train_ds = SubsetImageNet1K(root=data_path, train=True, transform=train_tfms,
                                    subset_size=subset_size)
 
-        # For validation, use ImageNetVal if val.txt exists, otherwise use SubsetImageNet1K
-        if use_val_txt and val_subset_size is None:
-            # Use val.txt for full validation set - share label mapping with train
-            val_ds = ImageNetVal(val_dir, val_txt_path, transform=val_tfms,
-                               label_mapping=train_ds.label_mapping)
+        # For validation, use ImageNetVal if annotations exist, otherwise use SubsetImageNet1K
+        if use_val_annotations and val_subset_size is None:
+            # Use annotations for full validation set - share synset mapping with train
+            val_ds = ImageNetVal(val_dir, val_annotations_dir, transform=val_tfms,
+                               synset_to_idx=train_ds.label_mapping)
         else:
             # Use subset for validation
             val_ds = SubsetImageNet1K(root=data_path, train=False, transform=val_tfms,
                                      val_subset_size=val_subset_size)
     else:
-        # For training, prefer ImageNetTrain if train_cls.txt exists
-        if use_train_txt:
-            print(f"Using train_cls.txt for training data")
-            train_ds = ImageNetTrain(train_dir, train_txt_path, transform=train_tfms)
+        # For training, prefer ImageNetTrain if annotations exist
+        if use_train_annotations:
+            print(f"Using XML annotations for training data")
+            train_ds = ImageNetTrain(train_dir, train_annotations_dir, transform=train_tfms)
         else:
             train_ds = AlbuImageNet1K(root=data_path, train=True, transform=train_tfms)
 
-        # For validation, prefer ImageNetVal if val.txt exists
-        if use_val_txt:
-            print(f"Using val.txt for validation data")
-            # Share label mapping with training dataset
-            label_mapping = getattr(train_ds, 'label_mapping', None)
-            val_ds = ImageNetVal(val_dir, val_txt_path, transform=val_tfms,
-                               label_mapping=label_mapping)
+        # For validation, prefer ImageNetVal if annotations exist
+        if use_val_annotations:
+            print(f"Using XML annotations for validation data")
+            # Share synset mapping with training dataset
+            synset_to_idx = getattr(train_ds, 'synset_to_idx', None)
+            val_ds = ImageNetVal(val_dir, val_annotations_dir, transform=val_tfms,
+                               synset_to_idx=synset_to_idx)
         else:
             val_ds = AlbuImageNet1K(root=data_path, train=False, transform=val_tfms)
 
