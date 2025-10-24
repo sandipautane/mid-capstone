@@ -147,8 +147,12 @@ class ResNet(nn.Module):
                 nn.ReLU(inplace=True)
             )
 
-        # Initial pooling layer (always MaxPool2d stride 2)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        # Initial pooling layer (always MaxPool2d stride 2) replace maxpool by MaxBlurPool if use_blurpool is True
+        if self.use_blurpool:
+            self.maxpool_or_blurpool = nn.Sequential(nn.MaxPool2d(kernel_size=3, stride=1), antialiased_cnns.BlurPool(64, stride=2))
+        else:
+            self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        
 
 
         # Calculate total number of blocks
@@ -210,9 +214,11 @@ class ResNet(nn.Module):
 
     def forward(self, x):
         x = self.conv1(x)
-        # The original ResNet has maxpool after conv1
-        x = self.maxpool(x)
-
+        # The original ResNet has maxpool after conv1 replace maxpool by MaxBlurPool if use_blurpool is True
+        if self.use_blurpool:
+            x = self.maxpool_or_blurpool(x)
+        else:
+            x = self.maxpool(x)
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
