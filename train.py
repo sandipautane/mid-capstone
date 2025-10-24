@@ -255,7 +255,7 @@ def train_worker(rank, world_size, args):
         val_loss, val_acc = test(model, device, val_loader, epoch)
 
         # Save if best accuracy (only on main process)
-        if is_main_process and epoch > 60:
+        if is_main_process and epoch > 20:
             if val_acc > best_acc:
                 best_acc = val_acc
                 # Save the underlying model if using DDP
