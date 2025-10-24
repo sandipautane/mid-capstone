@@ -152,7 +152,7 @@ def calculate_total_steps(epochs, num_samples):
 def get_image_size_for_epoch(epoch):
     """Return image size based on epoch"""
     if epoch <= 30:
-        return 64
+        return 224
     elif epoch <= 50:
         return 128
     else:
@@ -165,4 +165,4 @@ def get_batch_size(image_size):
     elif image_size == 128:
         return 128
     else:
-        return 64
+        return 128
