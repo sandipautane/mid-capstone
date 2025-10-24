@@ -128,22 +128,18 @@ def test(model, device, test_loader, epoch=None):
 
 
 
-def calculate_total_steps(epochs):
-    """Calculate total steps accounting for progressive resizing and batch size changes"""
+def calculate_total_steps(epochs, num_samples):
+    """Calculate total steps accounting for progressive resizing and batch size changes
+
+    Args:
+        epochs: Total number of training epochs
+        num_samples: Number of training samples in the dataset
+    """
     total_steps = 0
-    num_samples = 100000  # Tiny ImageNet training samples
 
     for epoch in range(1, epochs + 1):
         size = get_image_size_for_epoch(epoch)
-
-        # Adjust batch size based on image size
-        if size == 64:
-            batch_size = 256
-        elif size == 128:
-            batch_size = 64
-        else:  # 224
-            batch_size = 64
-
+        batch_size = get_batch_size(size)
         steps = num_samples // batch_size
         total_steps += steps
 

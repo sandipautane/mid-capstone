@@ -182,8 +182,11 @@ def train_worker(rank, world_size, args):
     # Optimizer with lower weight decay
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
-    # Find total steps
-    total_steps = calculate_total_steps(args.epochs)
+    # Find total steps - use the number of samples from the training dataset
+    num_train_samples = len(train_ds)
+    total_steps = calculate_total_steps(args.epochs, num_train_samples)
+    if is_main_process:
+        print(f"Total training steps across all epochs: {total_steps}")
 
     # Scheduler with correct total steps
     scheduler = optim.lr_scheduler.OneCycleLR(
