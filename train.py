@@ -15,6 +15,7 @@ from models.model import resnet50
 from dataloader import get_dataloaders
 import torchsummary as summary
 from train_utils import calculate_total_steps, get_image_size_for_epoch, get_batch_size
+from train_utils import get_learning_rate_config, get_phase_number
 from train_utils import EarlyStopping, train, test
 from tqdm import tqdm
 import numpy as np
@@ -203,25 +204,56 @@ def train_worker(rank, world_size, args):
     if args.ddp:
         model = DDP(model, device_ids=[rank], output_device=rank)
 
+    # Get initial phase configuration
+    if not resuming:
+        phase_config = get_learning_rate_config(start_epoch)
+        initial_lr = phase_config['start_lr']
+        initial_max_lr = phase_config['max_lr']
+        if is_main_process:
+            print(f"\n{'='*60}")
+            print(f"Starting {phase_config['phase_name']}")
+            print(f"  LR: {initial_lr:.2e} → Max LR: {initial_max_lr:.2e}")
+            print(f"  Image size: {initial_size}×{initial_size}")
+            print(f"  Batch size: {batch_size}")
+            print(f"  Epochs: {phase_config['epoch_range'][0]}-{phase_config['epoch_range'][1]}")
+            print(f"  {phase_config['notes']}")
+            print(f"{'='*60}\n")
+    else:
+        # Use command-line args for resumed training
+        initial_lr = args.lr
+        initial_max_lr = args.max_lr
+
     # Optimizer with lower weight decay
-    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    optimizer = optim.AdamW(model.parameters(), lr=initial_lr, weight_decay=args.weight_decay)
 
     # Find total steps - use the number of samples from the training dataset
     num_train_samples = len(train_ds)
-    if resuming:
+
+    # For progressive training, calculate steps per phase instead of total steps
+    if not resuming:
+        # Calculate steps for current phase only
+        phase_config = get_learning_rate_config(start_epoch)
+        phase_end = phase_config['epoch_range'][1]
+
+        # Calculate steps for this phase
+        total_steps = 0
+        for epoch in range(start_epoch, phase_end + 1):
+            size = get_image_size_for_epoch(epoch)
+            bs = get_batch_size(size)
+            steps = num_train_samples // bs
+            total_steps += steps
+    else:
         # Use fixed image size and batch size for resumed training
         total_steps = calculate_total_steps(additional_epochs, num_train_samples,
                                            fixed_image_size=224, fixed_batch_size=128)
-    else:
-        # Use progressive resizing for new training
-        total_steps = calculate_total_steps(additional_epochs, num_train_samples)
+
     if is_main_process:
-        print(f"Total training steps across all epochs: {total_steps}")
+        print(f"Total training steps for current phase: {total_steps}")
 
     # Scheduler with correct total steps
     scheduler = optim.lr_scheduler.OneCycleLR(
         optimizer,
-        max_lr=args.max_lr,
+        max_lr=initial_max_lr,
         total_steps=total_steps,
         pct_start=0.3,
         anneal_strategy='cos'
@@ -269,6 +301,7 @@ def train_worker(rank, world_size, args):
     # Training setup
     scaler = torch.cuda.amp.GradScaler()
     current_size = None
+    current_phase = None
     batch_size = args.batch_size
 
     # Calculate final epoch based on whether we're resuming or starting fresh
@@ -281,6 +314,50 @@ def train_worker(rank, world_size, args):
         print(f"Training from epoch {start_epoch} to {EPOCHS}")
 
     for epoch in range(start_epoch, EPOCHS + 1):
+        # Check for phase transition (only for non-resumed training)
+        if not resuming:
+            new_phase = get_phase_number(epoch)
+            if new_phase != current_phase and current_phase is not None:
+                # Phase transition detected - recreate optimizer and scheduler
+                phase_config = get_learning_rate_config(epoch)
+                new_lr = phase_config['start_lr']
+                new_max_lr = phase_config['max_lr']
+                phase_end = phase_config['epoch_range'][1]
+
+                if is_main_process:
+                    print(f"\n{'='*60}")
+                    print(f"PHASE TRANSITION: Starting {phase_config['phase_name']}")
+                    print(f"  LR: {new_lr:.2e} → Max LR: {new_max_lr:.2e}")
+                    print(f"  Epochs: {phase_config['epoch_range'][0]}-{phase_config['epoch_range'][1]}")
+                    print(f"  {phase_config['notes']}")
+                    print(f"{'='*60}\n")
+
+                # Calculate steps for new phase
+                phase_steps = 0
+                for e in range(epoch, phase_end + 1):
+                    size = get_image_size_for_epoch(e)
+                    bs = get_batch_size(size)
+                    steps = num_train_samples // bs
+                    phase_steps += steps
+
+                # Recreate optimizer with new learning rate
+                optimizer = optim.AdamW(model.parameters(), lr=new_lr, weight_decay=args.weight_decay)
+
+                # Recreate scheduler with new max_lr and phase steps
+                scheduler = optim.lr_scheduler.OneCycleLR(
+                    optimizer,
+                    max_lr=new_max_lr,
+                    total_steps=phase_steps,
+                    pct_start=0.3,
+                    anneal_strategy='cos'
+                )
+
+                if is_main_process:
+                    print(f"Recreated optimizer and scheduler for new phase")
+                    print(f"Phase steps: {phase_steps}\n")
+
+            current_phase = new_phase
+
         # Check if we need to change image size
         # If resuming, use fixed image size (224), otherwise use progressive resizing
         if resuming:
@@ -358,11 +435,11 @@ def train_worker(rank, world_size, args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Train ResNet50 on ImageNet 1K')
-    parser.add_argument('--epochs', type=int, default=90, help='number of epochs to train')
-    parser.add_argument('--batch-size', type=int, default=256, help='batch size')
-    parser.add_argument('--lr', type=float, default=1e-3, help='base learning rate')
-    parser.add_argument('--max-lr', type=float, default=1e-2, help='maximum learning rate for OneCycleLR')
+    parser = argparse.ArgumentParser(description='Train ResNet50 on ImageNet 1K with Progressive Resizing')
+    parser.add_argument('--epochs', type=int, default=40, help='number of epochs to train (default: 40 for all 4 phases)')
+    parser.add_argument('--batch-size', type=int, default=128, help='initial batch size (will be adjusted per phase)')
+    parser.add_argument('--lr', type=float, default=1e-3, help='base learning rate (used for resumed training, auto-adjusted for progressive training)')
+    parser.add_argument('--max-lr', type=float, default=5e-3, help='maximum learning rate for OneCycleLR (used for resumed training, auto-adjusted for progressive training)')
     parser.add_argument('--momentum', type=float, default=0.9, help='SGD momentum')
     parser.add_argument('--weight-decay', type=float, default=1e-4, help='weight decay')
     parser.add_argument('--resume', type=str, default='', help='path to latest checkpoint')
