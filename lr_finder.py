@@ -7,6 +7,9 @@ import torch.optim as optim
 from torch_lr_finder import LRFinder
 import torch.nn as nn
 import torch
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend for headless servers
+import matplotlib.pyplot as plt
 from models.model import resnet50
 from dataloader import get_dataloaders, get_train_transforms, get_val_transforms, ImageNetTrain
 
@@ -38,6 +41,8 @@ def main():
                         help='use subset of ImageNet for faster LR finding')
     parser.add_argument('--subset-size', type=int, default=10000,
                         help='size of subset to use')
+    parser.add_argument('--save-plot', type=str, default='lr_finder_plot.png',
+                        help='path to save LR finder plot')
 
     args = parser.parse_args()
 
@@ -113,9 +118,13 @@ def main():
         step_mode='exp'
     )
 
-    # Plot results
-    print("\nGenerating plot...")
-    lr_finder.plot()
+    # Plot and save results
+    print(f"\nGenerating and saving plot to {args.save_plot}...")
+    _, ax = plt.subplots(figsize=(10, 6))
+    lr_finder.plot(ax=ax)
+    plt.savefig(args.save_plot, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"Plot saved successfully!")
 
     # Get suggested LR
     try:
@@ -128,6 +137,7 @@ def main():
     lr_finder.reset()
 
     print("\nLR Finder complete!")
+    print(f"Download the plot: {args.save_plot}")
     print("=" * 60)
 
 if __name__ == "__main__":
