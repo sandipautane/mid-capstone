@@ -130,9 +130,32 @@ def train_worker(rank, world_size, args):
     if is_main_process:
         print("Device:", device)
 
-    # Create initial dataloaders to determine number of classes
-    initial_size = get_image_size_for_epoch(1)
-    batch_size = get_batch_size(initial_size)
+    # Check if resuming from checkpoint
+    resuming = args.resume and os.path.exists(args.resume)
+
+    if resuming and is_main_process:
+        print(f"\n{'='*60}")
+        print(f"Resuming from checkpoint: {args.resume}")
+        print(f"Using fixed configuration:")
+        print(f"  - Image size: 224x224")
+        print(f"  - Batch size: 128")
+        print(f"  - Drop path rate: 0.0")
+        print(f"  - Epochs: 20")
+        print(f"{'='*60}\n")
+
+    # Determine initial settings based on resume or new training
+    if resuming:
+        # Fixed settings for resumed training
+        initial_size = 224
+        batch_size = 128
+        override_drop_path = 0.0
+        override_epochs = 20
+    else:
+        # Progressive resizing for new training
+        initial_size = get_image_size_for_epoch(1)
+        batch_size = get_batch_size(initial_size)
+        override_drop_path = args.drop_path_rate
+        override_epochs = args.epochs
 
     if args.ddp:
         _, _, _, _, train_ds = get_ddp_dataloaders(
@@ -173,7 +196,7 @@ def train_worker(rank, world_size, args):
         print(f"Dataset has {num_classes} classes")
 
     # Create model with correct number of classes
-    model = resnet50(num_classes=num_classes, drop_path_rate=args.drop_path_rate, use_blurpool=args.use_blurpool).to(device)
+    model = resnet50(num_classes=num_classes, drop_path_rate=override_drop_path, use_blurpool=args.use_blurpool).to(device)
 
     # Wrap model with DDP if enabled
     if args.ddp:
@@ -184,7 +207,7 @@ def train_worker(rank, world_size, args):
 
     # Find total steps - use the number of samples from the training dataset
     num_train_samples = len(train_ds)
-    total_steps = calculate_total_steps(args.epochs, num_train_samples)
+    total_steps = calculate_total_steps(override_epochs, num_train_samples)
     if is_main_process:
         print(f"Total training steps across all epochs: {total_steps}")
 
@@ -197,9 +220,37 @@ def train_worker(rank, world_size, args):
         anneal_strategy='cos'
     )
 
-    # Track best accuracy
+    # Track best accuracy and starting epoch
     best_acc = 0.0
+    start_epoch = 1
     checkpoint_path = os.path.join(args.save_dir, "best_resnet50_imagenet_1k.pt")
+
+    # Load checkpoint if resuming
+    if resuming:
+        if is_main_process:
+            print(f"Loading checkpoint from {args.resume}...")
+
+        checkpoint = torch.load(args.resume, map_location=device)
+
+        # Load model state
+        if args.ddp:
+            model.module.load_state_dict(checkpoint['model_state_dict'])
+        else:
+            model.load_state_dict(checkpoint['model_state_dict'])
+
+        # Load optimizer and scheduler state
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+
+        # Load training state
+        start_epoch = checkpoint.get('epoch', 0) + 1
+        best_acc = checkpoint.get('accuracy', 0.0)
+
+        if is_main_process:
+            print(f"Resumed from epoch {checkpoint.get('epoch', 0)}")
+            print(f"Best accuracy so far: {best_acc:.2f}%")
+            print(f"Starting from epoch {start_epoch}")
+            print()
 
     # Create save directory
     if is_main_process and not os.path.exists(args.save_dir):
@@ -209,18 +260,27 @@ def train_worker(rank, world_size, args):
     scaler = torch.cuda.amp.GradScaler()
     current_size = None
     batch_size = args.batch_size
-    EPOCHS = args.epochs
+    EPOCHS = override_epochs
 
-    for epoch in range(1, EPOCHS + 1):
+    for epoch in range(start_epoch, EPOCHS + 1):
         # Check if we need to change image size
-        new_size = get_image_size_for_epoch(epoch)
+        # If resuming, use fixed image size (224), otherwise use progressive resizing
+        if resuming:
+            new_size = 224
+        else:
+            new_size = get_image_size_for_epoch(epoch)
+
         if new_size != current_size:
             if is_main_process:
                 print(f"\n{'='*50}")
                 print(f"Switching to image size: {new_size}x{new_size}")
                 print(f"{'='*50}\n")
 
-            batch_size = get_batch_size(new_size)
+            # Use fixed batch size when resuming, otherwise use progressive batch size
+            if resuming:
+                batch_size = 128
+            else:
+                batch_size = get_batch_size(new_size)
 
             # Recreate dataloaders with new size
             if args.ddp:
