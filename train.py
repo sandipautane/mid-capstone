@@ -416,8 +416,8 @@ def train_worker(rank, world_size, args):
         if is_main_process:
             model_to_save = model.module if args.ddp else model
 
-            # Save best model (after epoch 20 for new training, or always when resuming)
-            if (resuming or epoch > 20) and val_acc > best_acc:
+            # Save best model (after epoch 4 for new training, or always when resuming)
+            if (resuming or epoch > 4) and val_acc > best_acc:
                 best_acc = val_acc
                 torch.save({
                     'epoch': epoch,
