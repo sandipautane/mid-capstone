@@ -317,12 +317,26 @@ def train_worker(rank, world_size, args):
         tr_loss, tr_acc = train(model, device, train_loader, optimizer, scheduler, epoch, scaler, mixup_alpha=0.2)
         val_loss, val_acc = test(model, device, val_loader, epoch)
 
-        # Save if best accuracy (only on main process)
-        if is_main_process and epoch > 20:
-            if val_acc > best_acc:
+        # Save checkpoint (only on main process)
+        if is_main_process:
+            model_to_save = model.module if args.ddp else model
+
+            # When resuming, save after every epoch
+            if resuming:
+                epoch_checkpoint_path = os.path.join(args.save_dir, f"checkpoint_epoch_{epoch}.pt")
+                torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': model_to_save.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'scheduler_state_dict': scheduler.state_dict(),
+                    'accuracy': val_acc,
+                    'loss': val_loss
+                }, epoch_checkpoint_path)
+                print(f"✓ Saved checkpoint at epoch {epoch}: {epoch_checkpoint_path}")
+
+            # Always save best model (after epoch 20 for new training)
+            if (resuming or epoch > 20) and val_acc > best_acc:
                 best_acc = val_acc
-                # Save the underlying model if using DDP
-                model_to_save = model.module if args.ddp else model
                 torch.save({
                     'epoch': epoch,
                     'model_state_dict': model_to_save.state_dict(),
