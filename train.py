@@ -204,6 +204,10 @@ def train_worker(rank, world_size, args):
     if args.ddp:
         model = DDP(model, device_ids=[rank], output_device=rank)
 
+    # Initialize start_epoch and best_acc
+    start_epoch = 1
+    best_acc = 0.0
+
     # Get initial phase configuration
     if not resuming:
         phase_config = get_learning_rate_config(start_epoch)
@@ -259,9 +263,7 @@ def train_worker(rank, world_size, args):
         anneal_strategy='cos'
     )
 
-    # Track best accuracy and starting epoch
-    best_acc = 0.0
-    start_epoch = 1
+    # Set checkpoint path
     checkpoint_path = os.path.join(args.save_dir, "best_resnet50_imagenet_1k.pt")
 
     # Load checkpoint if resuming
