@@ -321,20 +321,7 @@ def train_worker(rank, world_size, args):
         if is_main_process:
             model_to_save = model.module if args.ddp else model
 
-            # When resuming, save after every epoch
-            if resuming:
-                epoch_checkpoint_path = os.path.join(args.save_dir, f"checkpoint_epoch_{epoch}.pt")
-                torch.save({
-                    'epoch': epoch,
-                    'model_state_dict': model_to_save.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
-                    'scheduler_state_dict': scheduler.state_dict(),
-                    'accuracy': val_acc,
-                    'loss': val_loss
-                }, epoch_checkpoint_path)
-                print(f"✓ Saved checkpoint at epoch {epoch}: {epoch_checkpoint_path}")
-
-            # Always save best model (after epoch 20 for new training)
+            # Save best model (after epoch 20 for new training, or always when resuming)
             if (resuming or epoch > 20) and val_acc > best_acc:
                 best_acc = val_acc
                 torch.save({
