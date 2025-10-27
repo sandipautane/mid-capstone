@@ -128,20 +128,28 @@ def test(model, device, test_loader, epoch=None):
 
 
 
-def calculate_total_steps(epochs, num_samples):
+def calculate_total_steps(epochs, num_samples, fixed_image_size=None, fixed_batch_size=None):
     """Calculate total steps accounting for progressive resizing and batch size changes
 
     Args:
         epochs: Total number of training epochs
         num_samples: Number of training samples in the dataset
+        fixed_image_size: If provided, use this image size for all epochs (for resuming)
+        fixed_batch_size: If provided, use this batch size for all epochs (for resuming)
     """
     total_steps = 0
 
-    for epoch in range(1, epochs + 1):
-        size = get_image_size_for_epoch(epoch)
-        batch_size = get_batch_size(size)
-        steps = num_samples // batch_size
-        total_steps += steps
+    if fixed_image_size is not None and fixed_batch_size is not None:
+        # Fixed settings (for resumed training)
+        steps_per_epoch = num_samples // fixed_batch_size
+        total_steps = epochs * steps_per_epoch
+    else:
+        # Progressive resizing (for new training)
+        for epoch in range(1, epochs + 1):
+            size = get_image_size_for_epoch(epoch)
+            batch_size = get_batch_size(size)
+            steps = num_samples // batch_size
+            total_steps += steps
 
     return total_steps
 

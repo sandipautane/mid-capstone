@@ -207,7 +207,13 @@ def train_worker(rank, world_size, args):
 
     # Find total steps - use the number of samples from the training dataset
     num_train_samples = len(train_ds)
-    total_steps = calculate_total_steps(additional_epochs, num_train_samples)
+    if resuming:
+        # Use fixed image size and batch size for resumed training
+        total_steps = calculate_total_steps(additional_epochs, num_train_samples,
+                                           fixed_image_size=224, fixed_batch_size=128)
+    else:
+        # Use progressive resizing for new training
+        total_steps = calculate_total_steps(additional_epochs, num_train_samples)
     if is_main_process:
         print(f"Total training steps across all epochs: {total_steps}")
 
@@ -238,9 +244,12 @@ def train_worker(rank, world_size, args):
         else:
             model.load_state_dict(checkpoint['model_state_dict'])
 
-        # Load optimizer and scheduler state
+        # Load optimizer state
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+
+        # NOTE: We don't load scheduler state when resuming because we create a new
+        # scheduler with fresh total_steps for the additional training epochs.
+        # The old scheduler state would cause step count mismatches.
 
         # Load training state
         start_epoch = checkpoint.get('epoch', 0) + 1
