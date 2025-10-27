@@ -139,7 +139,7 @@ def train_worker(rank, world_size, args):
         print(f"Using fixed configuration:")
         print(f"  - Image size: 224x224")
         print(f"  - Batch size: 128")
-        print(f"  - Drop path rate: 0.0")
+        print(f"  - Drop path rate: {args.resume_drop_path_rate}")
         print(f"  - Epochs: 20")
         print(f"{'='*60}\n")
 
@@ -148,7 +148,8 @@ def train_worker(rank, world_size, args):
         # Fixed settings for resumed training
         initial_size = 224
         batch_size = 128
-        override_drop_path = 0.0
+        # Use resume-specific drop_path_rate (default 0.0, can be overridden via --resume-drop-path-rate)
+        override_drop_path = args.resume_drop_path_rate
         additional_epochs = 20  # Train for 20 more epochs from checkpoint
     else:
         # Progressive resizing for new training
@@ -372,6 +373,7 @@ def main():
     parser.add_argument('--num-workers', type=int, default=8, help='number of data loading workers')
     parser.add_argument('--plot', action='store_true', help='plot training results')
     parser.add_argument('--drop-path-rate', type=float, default=0.2, help='drop path rate')
+    parser.add_argument('--resume-drop-path-rate', type=float, default=0.0, help='drop path rate when resuming (default: 0.0 for fine-tuning)')
     parser.add_argument('--use-blurpool', action='store_true', help='use blurpool')
     # DDP arguments
     parser.add_argument('--ddp', action='store_true', help='use DistributedDataParallel for multi-GPU training')
