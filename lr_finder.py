@@ -38,8 +38,6 @@ def main():
                         help='use subset of ImageNet for faster LR finding')
     parser.add_argument('--subset-size', type=int, default=10000,
                         help='size of subset to use')
-    parser.add_argument('--save-plot', type=str, default='lr_finder_plot.png',
-                        help='path to save LR finder plot')
 
     args = parser.parse_args()
 
@@ -115,9 +113,9 @@ def main():
         step_mode='exp'
     )
 
-    # Plot and save results
-    print(f"\nSaving plot to {args.save_plot}")
-    lr_finder.plot(save_path=args.save_plot)
+    # Plot results
+    print("\nGenerating plot...")
+    lr_finder.plot()
 
     # Get suggested LR
     try:
