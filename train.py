@@ -149,13 +149,13 @@ def train_worker(rank, world_size, args):
         initial_size = 224
         batch_size = 128
         override_drop_path = 0.0
-        override_epochs = 20
+        additional_epochs = 20  # Train for 20 more epochs from checkpoint
     else:
         # Progressive resizing for new training
         initial_size = get_image_size_for_epoch(1)
         batch_size = get_batch_size(initial_size)
         override_drop_path = args.drop_path_rate
-        override_epochs = args.epochs
+        additional_epochs = args.epochs
 
     if args.ddp:
         _, _, _, _, train_ds = get_ddp_dataloaders(
@@ -207,7 +207,7 @@ def train_worker(rank, world_size, args):
 
     # Find total steps - use the number of samples from the training dataset
     num_train_samples = len(train_ds)
-    total_steps = calculate_total_steps(override_epochs, num_train_samples)
+    total_steps = calculate_total_steps(additional_epochs, num_train_samples)
     if is_main_process:
         print(f"Total training steps across all epochs: {total_steps}")
 
@@ -260,7 +260,15 @@ def train_worker(rank, world_size, args):
     scaler = torch.cuda.amp.GradScaler()
     current_size = None
     batch_size = args.batch_size
-    EPOCHS = override_epochs
+
+    # Calculate final epoch based on whether we're resuming or starting fresh
+    if resuming:
+        EPOCHS = start_epoch + additional_epochs - 1  # Train for additional_epochs more from checkpoint
+    else:
+        EPOCHS = additional_epochs  # Train for total epochs from scratch
+
+    if is_main_process:
+        print(f"Training from epoch {start_epoch} to {EPOCHS}")
 
     for epoch in range(start_epoch, EPOCHS + 1):
         # Check if we need to change image size
