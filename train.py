@@ -134,24 +134,35 @@ def train_worker(rank, world_size, args):
     # Check if resuming from checkpoint
     resuming = args.resume and os.path.exists(args.resume)
 
-    if resuming and is_main_process:
-        print(f"\n{'='*60}")
-        print(f"Resuming from checkpoint: {args.resume}")
-        print(f"Using fixed configuration:")
-        print(f"  - Image size: 224x224")
-        print(f"  - Batch size: 128")
-        print(f"  - Drop path rate: {args.resume_drop_path_rate}")
-        print(f"  - Epochs: 20")
-        print(f"{'='*60}\n")
+    # Load checkpoint early if resuming to determine the epoch
+    resume_epoch = 1
+    if resuming:
+        if is_main_process:
+            print(f"\n{'='*60}")
+            print(f"Loading checkpoint to determine resume configuration: {args.resume}")
+        checkpoint = torch.load(args.resume, map_location='cpu')
+        resume_epoch = checkpoint.get('epoch', 0) + 1
+
+        if is_main_process:
+            print(f"Will resume from epoch {resume_epoch}")
+            print(f"{'='*60}\n")
 
     # Determine initial settings based on resume or new training
     if resuming:
-        # Fixed settings for resumed training
-        initial_size = 224
-        batch_size = 128
-        # Use resume-specific drop_path_rate (default 0.0, can be overridden via --resume-drop-path-rate)
-        override_drop_path = args.resume_drop_path_rate
-        additional_epochs = 20  # Train for 20 more epochs from checkpoint
+        # Continue with progressive training from the resumed epoch
+        initial_size = get_image_size_for_epoch(resume_epoch)
+        batch_size = get_batch_size(initial_size)
+        override_drop_path = args.drop_path_rate
+        additional_epochs = args.epochs  # Continue until total epochs
+
+        if is_main_process:
+            phase_config = get_learning_rate_config(resume_epoch)
+            print(f"Resuming in {phase_config['phase_name']}")
+            print(f"  - Image size: {initial_size}×{initial_size}")
+            print(f"  - Batch size: {batch_size}")
+            print(f"  - Drop path rate: {override_drop_path}")
+            print(f"  - Training until epoch: {additional_epochs}")
+            print(f"{'='*60}\n")
     else:
         # Progressive resizing for new training
         initial_size = get_image_size_for_epoch(1)
@@ -205,27 +216,26 @@ def train_worker(rank, world_size, args):
         model = DDP(model, device_ids=[rank], output_device=rank)
 
     # Initialize start_epoch and best_acc
-    start_epoch = 1
+    start_epoch = resume_epoch if resuming else 1
     best_acc = 0.0
 
-    # Get initial phase configuration
-    if not resuming:
-        phase_config = get_learning_rate_config(start_epoch)
-        initial_lr = phase_config['start_lr']
-        initial_max_lr = phase_config['max_lr']
-        if is_main_process:
-            print(f"\n{'='*60}")
+    # Get initial phase configuration (works for both new and resumed training)
+    phase_config = get_learning_rate_config(start_epoch)
+    initial_lr = phase_config['start_lr']
+    initial_max_lr = phase_config['max_lr']
+
+    if is_main_process:
+        print(f"\n{'='*60}")
+        if resuming:
+            print(f"Resuming {phase_config['phase_name']}")
+        else:
             print(f"Starting {phase_config['phase_name']}")
-            print(f"  LR: {initial_lr:.2e} → Max LR: {initial_max_lr:.2e}")
-            print(f"  Image size: {initial_size}×{initial_size}")
-            print(f"  Batch size: {batch_size}")
-            print(f"  Epochs: {phase_config['epoch_range'][0]}-{phase_config['epoch_range'][1]}")
-            print(f"  {phase_config['notes']}")
-            print(f"{'='*60}\n")
-    else:
-        # Use command-line args for resumed training
-        initial_lr = args.lr
-        initial_max_lr = args.max_lr
+        print(f"  LR: {initial_lr:.2e} → Max LR: {initial_max_lr:.2e}")
+        print(f"  Image size: {initial_size}×{initial_size}")
+        print(f"  Batch size: {batch_size}")
+        print(f"  Epochs: {phase_config['epoch_range'][0]}-{phase_config['epoch_range'][1]}")
+        print(f"  {phase_config['notes']}")
+        print(f"{'='*60}\n")
 
     # Optimizer with lower weight decay
     optimizer = optim.AdamW(model.parameters(), lr=initial_lr, weight_decay=args.weight_decay)
@@ -261,16 +271,12 @@ def train_worker(rank, world_size, args):
         train_sampler = None
 
     # Calculate total steps based on actual dataloader length
-    if not resuming:
-        # Calculate steps for current phase only using actual dataloader lengths
-        phase_config = get_learning_rate_config(start_epoch)
-        phase_end = phase_config['epoch_range'][1]
+    # For both new and resumed training, calculate steps for remaining epochs in current phase
+    phase_config = get_learning_rate_config(start_epoch)
+    phase_end = phase_config['epoch_range'][1]
 
-        # For the current size, we already have the dataloader
-        total_steps = len(train_loader) * (phase_end - start_epoch + 1)
-    else:
-        # Use fixed image size and batch size for resumed training
-        total_steps = len(train_loader) * additional_epochs
+    # Calculate steps for remaining epochs in current phase
+    total_steps = len(train_loader) * (phase_end - start_epoch + 1)
 
     if is_main_process:
         print(f"Total training steps for current phase: {total_steps}")
@@ -288,12 +294,14 @@ def train_worker(rank, world_size, args):
     # Set checkpoint path
     checkpoint_path = os.path.join(args.save_dir, "best_resnet50_imagenet_1k.pt")
 
-    # Load checkpoint if resuming
+    # Load checkpoint if resuming (checkpoint was already loaded earlier)
     if resuming:
         if is_main_process:
-            print(f"Loading checkpoint from {args.resume}...")
+            print(f"Loading model and optimizer states from checkpoint...")
 
-        checkpoint = torch.load(args.resume, map_location=device)
+        # Move checkpoint to correct device
+        checkpoint = {k: v.to(device) if isinstance(v, torch.Tensor) else v
+                     for k, v in checkpoint.items()}
 
         # Load model state
         if args.ddp:
@@ -305,17 +313,16 @@ def train_worker(rank, world_size, args):
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
         # NOTE: We don't load scheduler state when resuming because we create a new
-        # scheduler with fresh total_steps for the additional training epochs.
-        # The old scheduler state would cause step count mismatches.
+        # scheduler with fresh total_steps for the remaining epochs in the current phase.
+        # This allows seamless continuation with phase-based training.
 
         # Load training state
-        start_epoch = checkpoint.get('epoch', 0) + 1
         best_acc = checkpoint.get('accuracy', 0.0)
 
         if is_main_process:
             print(f"Resumed from epoch {checkpoint.get('epoch', 0)}")
             print(f"Best accuracy so far: {best_acc:.2f}%")
-            print(f"Starting from epoch {start_epoch}")
+            print(f"Continuing from epoch {start_epoch}")
             print()
 
     # Create save directory
@@ -329,53 +336,46 @@ def train_worker(rank, world_size, args):
     need_new_scheduler = False
     batch_size = args.batch_size
 
-    # Calculate final epoch based on whether we're resuming or starting fresh
-    if resuming:
-        EPOCHS = start_epoch + additional_epochs - 1  # Train for additional_epochs more from checkpoint
-    else:
-        EPOCHS = additional_epochs  # Train for total epochs from scratch
+    # Calculate final epoch - train until the specified total epochs
+    EPOCHS = additional_epochs
 
     if is_main_process:
         print(f"Training from epoch {start_epoch} to {EPOCHS}")
+        print(f"Remaining epochs: {EPOCHS - start_epoch + 1}\n")
 
     for epoch in range(start_epoch, EPOCHS + 1):
-        # Check for phase transition (only for non-resumed training)
-        if not resuming:
-            new_phase = get_phase_number(epoch)
-            if new_phase != current_phase and current_phase is not None:
-                # Phase transition detected - recreate optimizer and scheduler
-                phase_config = get_learning_rate_config(epoch)
-                new_lr = phase_config['start_lr']
-                new_max_lr = phase_config['max_lr']
-                phase_end = phase_config['epoch_range'][1]
+        # Check for phase transition
+        new_phase = get_phase_number(epoch)
+        if new_phase != current_phase and current_phase is not None:
+            # Phase transition detected - recreate optimizer and scheduler
+            phase_config = get_learning_rate_config(epoch)
+            new_lr = phase_config['start_lr']
+            new_max_lr = phase_config['max_lr']
+            phase_end = phase_config['epoch_range'][1]
 
-                if is_main_process:
-                    print(f"\n{'='*60}")
-                    print(f"PHASE TRANSITION: Starting {phase_config['phase_name']}")
-                    print(f"  LR: {new_lr:.2e} → Max LR: {new_max_lr:.2e}")
-                    print(f"  Epochs: {phase_config['epoch_range'][0]}-{phase_config['epoch_range'][1]}")
-                    print(f"  {phase_config['notes']}")
-                    print(f"{'='*60}\n")
+            if is_main_process:
+                print(f"\n{'='*60}")
+                print(f"PHASE TRANSITION: Starting {phase_config['phase_name']}")
+                print(f"  LR: {new_lr:.2e} → Max LR: {new_max_lr:.2e}")
+                print(f"  Epochs: {phase_config['epoch_range'][0]}-{phase_config['epoch_range'][1]}")
+                print(f"  {phase_config['notes']}")
+                print(f"{'='*60}\n")
 
-                # We'll recreate optimizer now, but scheduler will be created after
-                # we get the actual dataloader for the new phase
-                # Recreate optimizer with new learning rate
-                optimizer = optim.AdamW(model.parameters(), lr=new_lr, weight_decay=args.weight_decay)
+            # We'll recreate optimizer now, but scheduler will be created after
+            # we get the actual dataloader for the new phase
+            # Recreate optimizer with new learning rate
+            optimizer = optim.AdamW(model.parameters(), lr=new_lr, weight_decay=args.weight_decay)
 
-                # Mark that we need to recreate the scheduler after dataloader is ready
-                need_new_scheduler = True
+            # Mark that we need to recreate the scheduler after dataloader is ready
+            need_new_scheduler = True
 
-                if is_main_process:
-                    print(f"Recreated optimizer for new phase")
+            if is_main_process:
+                print(f"Recreated optimizer for new phase")
 
-            current_phase = new_phase
+        current_phase = new_phase
 
-        # Check if we need to change image size
-        # If resuming, use fixed image size (224), otherwise use progressive resizing
-        if resuming:
-            new_size = 224
-        else:
-            new_size = get_image_size_for_epoch(epoch)
+        # Check if we need to change image size (progressive resizing for all training)
+        new_size = get_image_size_for_epoch(epoch)
 
         if new_size != current_size:
             if is_main_process:
@@ -383,11 +383,8 @@ def train_worker(rank, world_size, args):
                 print(f"Switching to image size: {new_size}x{new_size}")
                 print(f"{'='*50}\n")
 
-            # Use fixed batch size when resuming, otherwise use progressive batch size
-            if resuming:
-                batch_size = 128
-            else:
-                batch_size = get_batch_size(new_size)
+            # Use progressive batch size
+            batch_size = get_batch_size(new_size)
 
             # Recreate dataloaders with new size
             if args.ddp:
@@ -453,8 +450,8 @@ def train_worker(rank, world_size, args):
         if is_main_process:
             model_to_save = model.module if args.ddp else model
 
-            # Save best model (after epoch 4 for new training, or always when resuming)
-            if (resuming or epoch > 4) and val_acc > best_acc:
+            # Save best model (after epoch 4)
+            if epoch > 4 and val_acc > best_acc:
                 best_acc = val_acc
                 torch.save({
                     'epoch': epoch,
