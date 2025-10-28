@@ -233,26 +233,48 @@ def train_worker(rank, world_size, args):
     # Find total steps - use the number of samples from the training dataset
     num_train_samples = len(train_ds)
 
-    # For progressive training, calculate steps per phase instead of total steps
+    # For progressive training, we'll calculate steps dynamically after creating dataloaders
+    # For now, create initial dataloaders to get the actual batch count
+    if args.ddp:
+        train_loader, val_loader, train_sampler, val_sampler, _ = get_ddp_dataloaders(
+            args.data_dir,
+            batch_size=batch_size,
+            image_size=initial_size,
+            num_workers=args.num_workers,
+            subset_size=args.subset_size if args.subset else None,
+            val_subset_size=args.subset_size // 10 if args.subset else None,
+            use_subset=args.subset,
+            rank=rank,
+            world_size=world_size
+        )
+    else:
+        from dataloader import get_dataloaders
+        train_loader, val_loader, _ = get_dataloaders(
+            args.data_dir,
+            batch_size=batch_size,
+            image_size=initial_size,
+            num_workers=args.num_workers,
+            subset_size=args.subset_size if args.subset else None,
+            val_subset_size=args.subset_size // 10 if args.subset else None,
+            use_subset=args.subset
+        )
+        train_sampler = None
+
+    # Calculate total steps based on actual dataloader length
     if not resuming:
-        # Calculate steps for current phase only
+        # Calculate steps for current phase only using actual dataloader lengths
         phase_config = get_learning_rate_config(start_epoch)
         phase_end = phase_config['epoch_range'][1]
 
-        # Calculate steps for this phase
-        total_steps = 0
-        for epoch in range(start_epoch, phase_end + 1):
-            size = get_image_size_for_epoch(epoch)
-            bs = get_batch_size(size)
-            steps = num_train_samples // bs
-            total_steps += steps
+        # For the current size, we already have the dataloader
+        total_steps = len(train_loader) * (phase_end - start_epoch + 1)
     else:
         # Use fixed image size and batch size for resumed training
-        total_steps = calculate_total_steps(additional_epochs, num_train_samples,
-                                           fixed_image_size=224, fixed_batch_size=128)
+        total_steps = len(train_loader) * additional_epochs
 
     if is_main_process:
         print(f"Total training steps for current phase: {total_steps}")
+        print(f"Steps per epoch: {len(train_loader)}")
 
     # Scheduler with correct total steps
     scheduler = optim.lr_scheduler.OneCycleLR(
@@ -304,6 +326,7 @@ def train_worker(rank, world_size, args):
     scaler = torch.cuda.amp.GradScaler()
     current_size = None
     current_phase = None
+    need_new_scheduler = False
     batch_size = args.batch_size
 
     # Calculate final epoch based on whether we're resuming or starting fresh
@@ -334,29 +357,16 @@ def train_worker(rank, world_size, args):
                     print(f"  {phase_config['notes']}")
                     print(f"{'='*60}\n")
 
-                # Calculate steps for new phase
-                phase_steps = 0
-                for e in range(epoch, phase_end + 1):
-                    size = get_image_size_for_epoch(e)
-                    bs = get_batch_size(size)
-                    steps = num_train_samples // bs
-                    phase_steps += steps
-
+                # We'll recreate optimizer now, but scheduler will be created after
+                # we get the actual dataloader for the new phase
                 # Recreate optimizer with new learning rate
                 optimizer = optim.AdamW(model.parameters(), lr=new_lr, weight_decay=args.weight_decay)
 
-                # Recreate scheduler with new max_lr and phase steps
-                scheduler = optim.lr_scheduler.OneCycleLR(
-                    optimizer,
-                    max_lr=new_max_lr,
-                    total_steps=phase_steps,
-                    pct_start=0.3,
-                    anneal_strategy='cos'
-                )
+                # Mark that we need to recreate the scheduler after dataloader is ready
+                need_new_scheduler = True
 
                 if is_main_process:
-                    print(f"Recreated optimizer and scheduler for new phase")
-                    print(f"Phase steps: {phase_steps}\n")
+                    print(f"Recreated optimizer for new phase")
 
             current_phase = new_phase
 
@@ -406,6 +416,31 @@ def train_worker(rank, world_size, args):
                 train_sampler = None
 
             current_size = new_size
+
+            # If we need a new scheduler (due to phase transition), create it now
+            if need_new_scheduler:
+                phase_config = get_learning_rate_config(epoch)
+                new_max_lr = phase_config['max_lr']
+                phase_end = phase_config['epoch_range'][1]
+
+                # Calculate steps for remaining epochs in this phase using actual dataloader length
+                phase_steps = len(train_loader) * (phase_end - epoch + 1)
+
+                # Recreate scheduler with new max_lr and accurate phase steps
+                scheduler = optim.lr_scheduler.OneCycleLR(
+                    optimizer,
+                    max_lr=new_max_lr,
+                    total_steps=phase_steps,
+                    pct_start=0.3,
+                    anneal_strategy='cos'
+                )
+
+                if is_main_process:
+                    print(f"Recreated scheduler for new phase")
+                    print(f"Phase steps: {phase_steps}")
+                    print(f"Steps per epoch: {len(train_loader)}\n")
+
+                need_new_scheduler = False
 
         # Set epoch for DistributedSampler
         if args.ddp and train_sampler is not None:
