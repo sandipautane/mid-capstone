@@ -312,9 +312,16 @@ def train_worker(rank, world_size, args):
         # Load optimizer state
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
-        # NOTE: We don't load scheduler state when resuming because we create a new
-        # scheduler with fresh total_steps for the remaining epochs in the current phase.
-        # This allows seamless continuation with phase-based training.
+        # Load scheduler state for seamless continuation
+        if 'scheduler_state_dict' in checkpoint:
+            try:
+                scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+                if is_main_process:
+                    print("✓ Loaded scheduler state from checkpoint")
+            except Exception as e:
+                if is_main_process:
+                    print(f"⚠ Warning: Could not load scheduler state: {e}")
+                    print("  Continuing with fresh scheduler (may cause LR instability)")
 
         # Load training state
         best_acc = checkpoint.get('accuracy', 0.0)
@@ -424,6 +431,7 @@ def train_worker(rank, world_size, args):
                 phase_steps = len(train_loader) * (phase_end - epoch + 1)
 
                 # Recreate scheduler with new max_lr and accurate phase steps
+                # Note: This creates a fresh scheduler, which is necessary for phase transitions
                 scheduler = optim.lr_scheduler.OneCycleLR(
                     optimizer,
                     max_lr=new_max_lr,
@@ -433,9 +441,10 @@ def train_worker(rank, world_size, args):
                 )
 
                 if is_main_process:
-                    print(f"Recreated scheduler for new phase")
-                    print(f"Phase steps: {phase_steps}")
-                    print(f"Steps per epoch: {len(train_loader)}\n")
+                    print(f"✓ Recreated scheduler for new phase")
+                    print(f"  Phase steps: {phase_steps}")
+                    print(f"  Steps per epoch: {len(train_loader)}")
+                    print(f"  This is expected at phase boundaries\n")
 
                 need_new_scheduler = False
 
