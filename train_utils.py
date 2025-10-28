@@ -223,7 +223,7 @@ def get_learning_rate_config(epoch):
             'phase_name': 'Phase 2 - Main',
             'phase_num': 2,
             'start_lr': 1.0e-3,
-            'max_lr': 5.0e-3,  # midpoint of 4e-3 to 6e-3
+            'max_lr': 4.0e-3,  # Reduced from 5e-3 to 4e-3 for better stability
             'recommended_epochs': 20,
             'epoch_range': (9, 28),
             'notes': 'Core training stage, most important phase'
