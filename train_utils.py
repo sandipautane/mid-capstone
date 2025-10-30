@@ -58,11 +58,15 @@ def train(model, device, train_loader, optimizer, scheduler, epoch, scaler, mixu
     for batch_idx, (data, target) in enumerate(pbar):
         data, target = data.to(device), target.to(device)
 
-        # Apply mixup
-        if np.random.random() > 0.5:
-            data, targets_a, targets_b, lam = mixup_data(data, target, mixup_alpha, device)
+        # Apply mixup or cutmix (skip if mixup_alpha is 0)
+        if mixup_alpha > 0:
+            if np.random.random() > 0.5:
+                data, targets_a, targets_b, lam = mixup_data(data, target, mixup_alpha, device)
+            else:
+                data, targets_a, targets_b, lam = cutmix_data(data, target, 1.0, device)
         else:
-            data, targets_a, targets_b, lam = cutmix_data(data, target, 1.0, device)
+            # No augmentation - use original data
+            targets_a, targets_b, lam = target, target, 1.0
 
         optimizer.zero_grad()
 
