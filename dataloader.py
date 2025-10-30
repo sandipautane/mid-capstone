@@ -27,11 +27,11 @@ def get_train_transforms(image_size=64):
     return A.Compose([
         A.Resize(image_size, image_size),  # Always resize to ensure consistent image sizes
         A.HorizontalFlip(p=0.5),
-        # A.ShiftScaleRotate(shift_limit=0.0625, scale_limit=0.10, rotate_limit=15, p=0.5),
-        # A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1, p=0.3),
-        # A.CoarseDropout(max_holes=1, max_height=int(image_size*0.25), max_width=int(image_size*0.25),
-        #                 min_holes=1, min_height=int(image_size*0.25), min_width=int(image_size*0.25),
-        #                 fill_value=fill_value_255, p=0.5),
+        A.ShiftScaleRotate(shift_limit=0.0625, scale_limit=0.10, rotate_limit=15, p=0.5),
+        A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1, p=0.3),
+        A.CoarseDropout(max_holes=1, max_height=int(image_size*0.25), max_width=int(image_size*0.25),
+                        min_holes=1, min_height=int(image_size*0.25), min_width=int(image_size*0.25),
+                        fill_value=fill_value_255, p=0.5),
         A.Normalize(mean=MEAN, std=STD),
         ToTensorV2(),
     ])
