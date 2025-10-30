@@ -54,11 +54,27 @@ def main():
     parser.add_argument('--subset-size', type=int, default=10000,
                         help='size of subset to use')
 
+    # Model architecture settings
+    parser.add_argument('--drop-path-rate', type=float, default=0.05,
+                        help='drop path rate (stochastic depth) - use 0 to disable')
+    parser.add_argument('--use-blurpool', action='store_true', default=True,
+                        help='use blur pooling (default: True)')
+    parser.add_argument('--no-blurpool', dest='use_blurpool', action='store_false',
+                        help='disable blur pooling')
+
+    # Augmentation settings
+    parser.add_argument('--no-mixup', action='store_true',
+                        help='disable mixup and cutmix augmentation')
+    parser.add_argument('--mixup-alpha', type=float, default=0.2,
+                        help='mixup alpha parameter (default: 0.2)')
+
     args = parser.parse_args()
 
-    # Fixed settings
-    DROP_PATH_RATE = 0.05
-    USE_BLURPOOL = True
+    # Get settings from args
+    DROP_PATH_RATE = args.drop_path_rate
+    USE_BLURPOOL = args.use_blurpool
+    USE_MIXUP = not args.no_mixup
+    MIXUP_ALPHA = args.mixup_alpha
 
     # Auto-set batch size based on image size if not specified
     if args.batch_size is None:
@@ -77,8 +93,11 @@ def main():
     print(f"LR: {args.lr:.2e} → Max LR: {args.max_lr:.2e}")
     print(f"Image size: {args.image_size}×{args.image_size}")
     print(f"Batch size: {args.batch_size}")
-    print(f"Drop path rate: {DROP_PATH_RATE} (fixed)")
-    print(f"Blur pool: {USE_BLURPOOL} (fixed)")
+    print(f"Drop path rate: {DROP_PATH_RATE}")
+    print(f"Blur pool: {USE_BLURPOOL}")
+    print(f"Mixup/CutMix: {'Enabled' if USE_MIXUP else 'Disabled'}")
+    if USE_MIXUP:
+        print(f"  Mixup alpha: {MIXUP_ALPHA}")
     print(f"Weight decay: {args.weight_decay}")
     print(f"Save directory: {args.save_dir}")
     print("=" * 60)
@@ -181,7 +200,8 @@ def main():
 
         # Train
         train_loss, train_acc = train(
-            model, device, train_loader, optimizer, scheduler, epoch, scaler, mixup_alpha=0.2
+            model, device, train_loader, optimizer, scheduler, epoch, scaler,
+            mixup_alpha=MIXUP_ALPHA if USE_MIXUP else 0.0
         )
 
         # Validate
@@ -203,7 +223,9 @@ def main():
                     'image_size': args.image_size,
                     'batch_size': args.batch_size,
                     'drop_path_rate': DROP_PATH_RATE,
-                    'use_blurpool': USE_BLURPOOL
+                    'use_blurpool': USE_BLURPOOL,
+                    'use_mixup': USE_MIXUP,
+                    'mixup_alpha': MIXUP_ALPHA
                 }
             }, checkpoint_path)
             print(f"✓ Saved best model at epoch {epoch} with accuracy: {val_acc:.2f}%")
