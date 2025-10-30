@@ -366,7 +366,28 @@ def train_worker(rank, world_size, args):
                 print(f"  LR: {new_lr:.2e} → Max LR: {new_max_lr:.2e}")
                 print(f"  Epochs: {phase_config['epoch_range'][0]}-{phase_config['epoch_range'][1]}")
                 print(f"  {phase_config['notes']}")
+
+                # Disable mixup/cutmix and drop_path for phases 3 and 4
+                if new_phase >= 3:
+                    print(f"  Mixup/CutMix: DISABLED (fine-tuning phase)")
+                    print(f"  Drop Path: DISABLED (fine-tuning phase)")
+
                 print(f"{'='*60}\n")
+
+            # Disable drop_path for phases 3 and 4 by setting it to 0
+            if new_phase >= 3:
+                model_to_modify = model.module if args.ddp else model
+                if hasattr(model_to_modify, 'set_drop_path_rate'):
+                    model_to_modify.set_drop_path_rate(0.0)
+                    if is_main_process:
+                        print(f"✓ Disabled drop_path for fine-tuning (Phase {new_phase})")
+                else:
+                    # Manually disable drop_path in all DropPath layers
+                    for name, module in model_to_modify.named_modules():
+                        if hasattr(module, 'drop_prob'):
+                            module.drop_prob = 0.0
+                    if is_main_process:
+                        print(f"✓ Disabled drop_path in all DropPath layers for Phase {new_phase}")
 
             # We'll recreate optimizer now, but scheduler will be created after
             # we get the actual dataloader for the new phase
@@ -377,7 +398,7 @@ def train_worker(rank, world_size, args):
             need_new_scheduler = True
 
             if is_main_process:
-                print(f"Recreated optimizer for new phase")
+                print(f"✓ Recreated optimizer for new phase")
 
         current_phase = new_phase
 
@@ -452,7 +473,11 @@ def train_worker(rank, world_size, args):
         if args.ddp and train_sampler is not None:
             train_sampler.set_epoch(epoch)
 
-        tr_loss, tr_acc = train(model, device, train_loader, optimizer, scheduler, epoch, scaler, mixup_alpha=0.2)
+        # Disable mixup/cutmix for phases 3 and 4 (fine-tuning phases)
+        current_phase_num = get_phase_number(epoch)
+        mixup_alpha = 0.0 if current_phase_num >= 3 else 0.2
+
+        tr_loss, tr_acc = train(model, device, train_loader, optimizer, scheduler, epoch, scaler, mixup_alpha=mixup_alpha)
         val_loss, val_acc = test(model, device, val_loader, epoch)
 
         # Save checkpoint (only on main process)
