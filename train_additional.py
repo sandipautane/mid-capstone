@@ -57,9 +57,7 @@ def main():
     # Model architecture settings
     parser.add_argument('--drop-path-rate', type=float, default=0.05,
                         help='drop path rate (stochastic depth) - use 0 to disable')
-    parser.add_argument('--use-blurpool', action='store_true', default=True,
-                        help='use blur pooling (default: True)')
-    parser.add_argument('--no-blurpool', dest='use_blurpool', action='store_false',
+    parser.add_argument('--no-blurpool', action='store_true',
                         help='disable blur pooling')
 
     # Augmentation settings
@@ -72,9 +70,9 @@ def main():
 
     # Get settings from args
     DROP_PATH_RATE = args.drop_path_rate
-    USE_BLURPOOL = args.use_blurpool
-    USE_MIXUP = not args.no_mixup
-    MIXUP_ALPHA = args.mixup_alpha
+    USE_BLURPOOL = not args.no_blurpool  # Default True unless --no-blurpool is set
+    USE_MIXUP = not args.no_mixup  # Default True unless --no-mixup is set
+    MIXUP_ALPHA = args.mixup_alpha if USE_MIXUP else 0.0
 
     # Auto-set batch size based on image size if not specified
     if args.batch_size is None:
