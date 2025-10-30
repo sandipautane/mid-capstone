@@ -165,16 +165,16 @@ def get_image_size_for_epoch(epoch):
     """Return image size based on epoch
 
     Progressive resizing schedule:
-    - Phase 1 (Warm-up): epochs 1-8 → 128×128
-    - Phase 2 (Main): epochs 9-28 → 224×224
-    - Phase 3 (Refine): epochs 29-36 → 288×288
-    - Phase 4 (Optional FT): epochs 37-40 → 320×320
+    - Phase 1 (Warm-up): epochs 1-20 → 128×128
+    - Phase 2 (Main): epochs 21-65 → 224×224
+    - Phase 3 (Refine): epochs 66-80 → 288×288
+    - Phase 4 (Optional FT): epochs 81-95 → 320×320
     """
-    if epoch <= 8:
+    if epoch <= 20:
         return 128
-    elif epoch <= 28:
+    elif epoch <= 65:
         return 224
-    elif epoch <= 36:
+    elif epoch <= 80:
         return 288
     else:
         return 320
@@ -185,17 +185,17 @@ def get_batch_size(image_size):
     Batch size schedule for progressive resizing:
     - 128×128 → batch size 128
     - 224×224 → batch size 128
-    - 288×288 → batch size 32
-    - 320×320 → batch size 16
+    - 288×288 → batch size 128
+    - 320×320 → batch size 64
     """
     if image_size == 128:
         return 128
     elif image_size == 224:
         return 128
     elif image_size == 288:
-        return 32
+        return 128
     elif image_size == 320:
-        return 16
+        return 64
     else:
         # Default fallback
         return 128
@@ -207,40 +207,40 @@ def get_learning_rate_config(epoch):
         dict: Contains 'start_lr', 'max_lr', 'phase_name', and 'recommended_epochs'
 
     Learning rate schedule:
-    - Phase 1 (Warm-up, epochs 1-8): start=1e-3, max=4e-3 to 5e-3
-    - Phase 2 (Main, epochs 9-28): start=1e-3, max=4e-3 to 6e-3
-    - Phase 3 (Refine, epochs 29-36): start=2e-4, max=8e-4 to 1e-3
-    - Phase 4 (Optional FT, epochs 37-40): start=1e-4, max=4e-4 to 5e-4
+    - Phase 1 (Warm-up, epochs 1-20): start=1e-3, max=4e-3 to 5e-3
+    - Phase 2 (Main, epochs 21-65): start=1e-3, max=4e-3 to 6e-3
+    - Phase 3 (Refine, epochs 66-80): start=2e-4, max=8e-4 to 1e-3
+    - Phase 4 (Optional FT, epochs 81-95): start=1e-4, max=4e-4 to 5e-4
     """
-    if epoch <= 8:
+    if epoch <= 20:
         return {
             'phase_name': 'Phase 1 - Warm-up',
             'phase_num': 1,
             'start_lr': 1.0e-3,
             'max_lr': 4.5e-3,  # midpoint of 4e-3 to 5e-3
-            'recommended_epochs': 8,
-            'epoch_range': (1, 8),
+            'recommended_epochs': 20,
+            'epoch_range': (1, 20),
             'notes': 'Fast coarse training to learn global features'
         }
-    elif epoch <= 28:
+    elif epoch <= 65:
         return {
             'phase_name': 'Phase 2 - Main',
             'phase_num': 2,
             'start_lr': 1.0e-3,
             'max_lr': 4.0e-3,  # Reduced from 5e-3 to 4e-3 for better stability
-            'recommended_epochs': 20,
-            'epoch_range': (9, 28),
+            'recommended_epochs': 45,
+            'epoch_range': (21, 65),
             'notes': 'Core training stage, most important phase'
         }
-    elif epoch <= 36:
+    elif epoch <= 80:
         return {
             'phase_name': 'Phase 3 - Refine',
             'phase_num': 3,
             'start_lr': 2.0e-4,
             'max_lr': 9.0e-4,  # midpoint of 8e-4 to 1e-3
-            'recommended_epochs': 8,
-            'epoch_range': (29, 36),
-            'notes': 'Adds fine details, fewer epochs suffice'
+            'recommended_epochs': 15,
+            'epoch_range': (66, 80),
+            'notes': 'Adds fine details, batch size 128'
         }
     else:
         return {
@@ -248,9 +248,9 @@ def get_learning_rate_config(epoch):
             'phase_num': 4,
             'start_lr': 1.0e-4,
             'max_lr': 4.5e-4,  # midpoint of 4e-4 to 5e-4
-            'recommended_epochs': 4,
-            'epoch_range': (37, 40),
-            'notes': 'Short final fine-tuning for extra sharpness'
+            'recommended_epochs': 15,
+            'epoch_range': (81, 95),
+            'notes': 'Final fine-tuning at highest resolution, batch size 64'
         }
 
 def get_phase_number(epoch):
