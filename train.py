@@ -270,19 +270,34 @@ def train_worker(rank, world_size, args):
         )
         train_sampler = None
 
-    # Calculate total steps based on actual dataloader length
-    # For both new and resumed training, calculate steps for remaining epochs in current phase
-    phase_config = get_learning_rate_config(start_epoch)
-    phase_end = phase_config['epoch_range'][1]
-
-    # Calculate steps for remaining epochs in current phase
-    total_steps = len(train_loader) * (phase_end - start_epoch + 1)
+    # Calculate total steps for ENTIRE training (single continuous scheduler)
+    # This replaces the old per-phase scheduler approach
+    if resuming:
+        # Calculate remaining steps from current epoch to end
+        remaining_epochs = additional_epochs - start_epoch + 1
+        # Use approximate steps per epoch (will vary slightly with batch size changes)
+        total_steps = len(train_loader) * remaining_epochs
+    else:
+        # Calculate total steps for all epochs using actual batch sizes per phase
+        total_steps = 0
+        for epoch_num in range(1, additional_epochs + 1):
+            size = get_image_size_for_epoch(epoch_num)
+            bs = get_batch_size(size)
+            steps_for_epoch = num_train_samples // bs
+            total_steps += steps_for_epoch
 
     if is_main_process:
-        print(f"Total training steps for current phase: {total_steps}")
-        print(f"Steps per epoch: {len(train_loader)}")
+        print(f"\n{'='*60}")
+        print(f"Single Continuous Scheduler Configuration")
+        print(f"{'='*60}")
+        print(f"Total training steps (all epochs): {total_steps}")
+        print(f"Initial steps per epoch: {len(train_loader)}")
+        print(f"Max LR (peak): {initial_max_lr:.2e}")
+        print(f"Strategy: OneCycleLR with continuous decay across all phases")
+        print(f"Note: LR naturally decreases as training progresses")
+        print(f"{'='*60}\n")
 
-    # Scheduler with correct total steps
+    # Single scheduler for entire training - no recreation at phase transitions
     scheduler = optim.lr_scheduler.OneCycleLR(
         optimizer,
         max_lr=initial_max_lr,
@@ -312,16 +327,19 @@ def train_worker(rank, world_size, args):
         # Load optimizer state
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
-        # Load scheduler state for seamless continuation
+        # Load scheduler state for seamless continuation with single continuous scheduler
         if 'scheduler_state_dict' in checkpoint:
             try:
                 scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+                current_lr = optimizer.param_groups[0]['lr']
                 if is_main_process:
-                    print("✓ Loaded scheduler state from checkpoint")
+                    print(f"✓ Loaded scheduler state from checkpoint")
+                    print(f"  Current LR: {current_lr:.2e} (continuous OneCycleLR schedule)")
             except Exception as e:
                 if is_main_process:
                     print(f"⚠ Warning: Could not load scheduler state: {e}")
                     print("  Continuing with fresh scheduler (may cause LR instability)")
+                    print("  Tip: This is normal if switching from old multi-scheduler to single scheduler")
 
         # Load training state
         best_acc = checkpoint.get('accuracy', 0.0)
@@ -340,7 +358,6 @@ def train_worker(rank, world_size, args):
     scaler = torch.cuda.amp.GradScaler()
     current_size = None
     current_phase = None
-    need_new_scheduler = False
     batch_size = args.batch_size
 
     # Calculate final epoch - train until the specified total epochs
@@ -351,23 +368,20 @@ def train_worker(rank, world_size, args):
         print(f"Remaining epochs: {EPOCHS - start_epoch + 1}\n")
 
     for epoch in range(start_epoch, EPOCHS + 1):
-        # Check for phase transition
+        # Check for phase transition (only for drop_path disabling, not for optimizer/scheduler)
         new_phase = get_phase_number(epoch)
         if new_phase != current_phase and current_phase is not None:
-            # Phase transition detected - recreate optimizer and scheduler
+            # Phase transition detected
             phase_config = get_learning_rate_config(epoch)
-            new_lr = phase_config['start_lr']
-            new_max_lr = phase_config['max_lr']
-            phase_end = phase_config['epoch_range'][1]
 
             if is_main_process:
                 print(f"\n{'='*60}")
                 print(f"PHASE TRANSITION: Starting {phase_config['phase_name']}")
-                print(f"  LR: {new_lr:.2e} → Max LR: {new_max_lr:.2e}")
                 print(f"  Epochs: {phase_config['epoch_range'][0]}-{phase_config['epoch_range'][1]}")
                 print(f"  {phase_config['notes']}")
+                print(f"  Current LR: {optimizer.param_groups[0]['lr']:.2e} (continuous schedule)")
 
-                # Disable mixup/cutmix and drop_path for phases 3 and 4
+                # Note about regularization changes
                 if new_phase >= 3:
                     print(f"  Mixup/CutMix: DISABLED (fine-tuning phase)")
                     print(f"  Drop Path: DISABLED (fine-tuning phase)")
@@ -389,16 +403,8 @@ def train_worker(rank, world_size, args):
                     if is_main_process:
                         print(f"✓ Disabled drop_path in all DropPath layers for Phase {new_phase}")
 
-            # We'll recreate optimizer now, but scheduler will be created after
-            # we get the actual dataloader for the new phase
-            # Recreate optimizer with new learning rate
-            optimizer = optim.AdamW(model.parameters(), lr=new_lr, weight_decay=args.weight_decay)
-
-            # Mark that we need to recreate the scheduler after dataloader is ready
-            need_new_scheduler = True
-
-            if is_main_process:
-                print(f"✓ Recreated optimizer for new phase")
+            # NOTE: We NO LONGER recreate optimizer or scheduler at phase transitions
+            # The single continuous scheduler handles LR decay naturally across all phases
 
         current_phase = new_phase
 
@@ -442,32 +448,8 @@ def train_worker(rank, world_size, args):
 
             current_size = new_size
 
-            # If we need a new scheduler (due to phase transition), create it now
-            if need_new_scheduler:
-                phase_config = get_learning_rate_config(epoch)
-                new_max_lr = phase_config['max_lr']
-                phase_end = phase_config['epoch_range'][1]
-
-                # Calculate steps for remaining epochs in this phase using actual dataloader length
-                phase_steps = len(train_loader) * (phase_end - epoch + 1)
-
-                # Recreate scheduler with new max_lr and accurate phase steps
-                # Note: This creates a fresh scheduler, which is necessary for phase transitions
-                scheduler = optim.lr_scheduler.OneCycleLR(
-                    optimizer,
-                    max_lr=new_max_lr,
-                    total_steps=phase_steps,
-                    pct_start=0.3,
-                    anneal_strategy='cos'
-                )
-
-                if is_main_process:
-                    print(f"✓ Recreated scheduler for new phase")
-                    print(f"  Phase steps: {phase_steps}")
-                    print(f"  Steps per epoch: {len(train_loader)}")
-                    print(f"  This is expected at phase boundaries\n")
-
-                need_new_scheduler = False
+            # NOTE: With single continuous scheduler, we no longer recreate scheduler
+            # when batch size/dataloader changes. The scheduler continues naturally.
 
         # Set epoch for DistributedSampler
         if args.ddp and train_sampler is not None:
