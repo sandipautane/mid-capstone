@@ -222,7 +222,7 @@ def train_worker(rank, world_size, args):
     # Get initial phase configuration (works for both new and resumed training)
     phase_config = get_learning_rate_config(start_epoch)
     initial_lr = phase_config['start_lr']
-    initial_max_lr = phase_config['max_lr']
+    initial_max_lr = 4e-3  # Single max_lr for entire continuous scheduler
 
     if is_main_process:
         print(f"\n{'='*60}")

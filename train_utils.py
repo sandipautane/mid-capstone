@@ -165,12 +165,12 @@ def get_image_size_for_epoch(epoch):
     """Return image size based on epoch
 
     Progressive resizing schedule:
-    - Phase 1 (Warm-up): epochs 1-20 → 128×128
-    - Phase 2 (Main): epochs 21-80 → 224×224
+    - Phase 1 (Warm-up): epochs 1-15 → 128×128
+    - Phase 2 (Main): epochs 16-80 → 224×224
     - Phase 3 (Refine): epochs 81-95 → 288×288
     - Phase 4 (Optional FT): epochs 96-110 → 320×320
     """
-    if epoch <= 20:
+    if epoch <= 15:
         return 128
     elif epoch <= 80:
         return 224
@@ -207,19 +207,21 @@ def get_learning_rate_config(epoch):
         dict: Contains 'start_lr', 'max_lr', 'phase_name', and 'recommended_epochs'
 
     Learning rate schedule:
-    - Phase 1 (Warm-up, epochs 1-20): start=1e-3, max=4e-3 to 5e-3
-    - Phase 2 (Main, epochs 21-80): start=1e-3, max=4e-3 to 6e-3
-    - Phase 3 (Refine, epochs 81-95): start=2e-4, max=8e-4 to 1e-3
-    - Phase 4 (Optional FT, epochs 96-110): start=1e-4, max=4e-4 to 5e-4
+    - Phase 1 (Warm-up, epochs 1-15): start=1e-3, max=4e-3
+    - Phase 2 (Main, epochs 16-80): start=1e-3, max=4e-3
+    - Phase 3 (Refine, epochs 81-95): start=2e-4, max=9e-4
+    - Phase 4 (Optional FT, epochs 96-110): start=1e-4, max=4.5e-4
+
+    Note: With single continuous scheduler, only Phase 1's max_lr (4e-3) is used.
     """
-    if epoch <= 20:
+    if epoch <= 15:
         return {
             'phase_name': 'Phase 1 - Warm-up',
             'phase_num': 1,
             'start_lr': 1.0e-3,
-            'max_lr': 4.5e-3,  # midpoint of 4e-3 to 5e-3
-            'recommended_epochs': 20,
-            'epoch_range': (1, 20),
+            'max_lr': 4.0e-3,  # Used for entire continuous scheduler
+            'recommended_epochs': 15,
+            'epoch_range': (1, 15),
             'notes': 'Fast coarse training to learn global features'
         }
     elif epoch <= 80:
@@ -227,9 +229,9 @@ def get_learning_rate_config(epoch):
             'phase_name': 'Phase 2 - Main',
             'phase_num': 2,
             'start_lr': 1.0e-3,
-            'max_lr': 4.0e-3,  # Reduced from 5e-3 to 4e-3 for better stability
-            'recommended_epochs': 60,
-            'epoch_range': (21, 80),
+            'max_lr': 4.0e-3,  # For logging only (single scheduler uses Phase 1 max_lr)
+            'recommended_epochs': 65,
+            'epoch_range': (16, 80),
             'notes': 'Core training stage, most important phase'
         }
     elif epoch <= 95:
