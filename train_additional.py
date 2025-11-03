@@ -37,8 +37,8 @@ def main():
     parser.add_argument('--max-lr', type=float, required=True,
                         help='maximum learning rate for OneCycleLR')
     parser.add_argument('--image-size', type=int, required=True,
-                        choices=[128, 224, 288, 320],
-                        help='image size for training (128, 224, 288, or 320)')
+                        choices=[128, 224, 288, 320, 384, 448],
+                        help='image size for training (128, 224, 288, 320, 384, or 448)')
     parser.add_argument('--batch-size', type=int, default=None,
                         help='batch size (if not specified, auto-set based on image size)')
 
@@ -76,8 +76,8 @@ def main():
 
     # Auto-set batch size based on image size if not specified
     if args.batch_size is None:
-        batch_size_map = {128: 128, 224: 128, 288: 32, 320: 16}
-        args.batch_size = batch_size_map[args.image_size]
+        batch_size_map = {128: 128, 224: 128, 288: 128, 320: 64, 384: 48, 448: 32}
+        args.batch_size = batch_size_map.get(args.image_size, 32)
         print(f"Auto-setting batch size to {args.batch_size} for image size {args.image_size}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
