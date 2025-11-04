@@ -61,7 +61,7 @@ ema.restore()       # Restore original weights
 
 This repository now supports both **single-GPU** and **multi-GPU** training on ImageNet-1K dataset using PyTorch's DistributedDataParallel (DDP).
 
-### 🚀 Hardware Setup: AWS EC2 p3.8xlarge
+### 🚀 Hardware Setup: AWS EC2 g5.2xlarge
 
 **Instance Specifications:**
 - **Instance Type**: p3.8xlarge
@@ -304,11 +304,12 @@ python train.py \
 
 ### Progressive Image Resizing
 The training script automatically adjusts image sizes during training:
-- **Epochs 1-30**: 64×64 (batch size: 256)
-- **Epochs 31-50**: 128×128 (batch size: 128)
-- **Epochs 51-90**: 224×224 (batch size: 64)
+- **Phase 1 - Warm-up Epochs 1-15**: 128×128 (batch size: 128)
+- **Phase 2 - Main Epochs 16-80**: 228×228 (batch size: 128)
+- **Phase 3 - Refine Epochs 81-95**: 320×320 (batch size: 64)
+- **Phase 4 - Optional FT Epochs 96-110**: 388×388 (batch size: 64)
 
-**Note**: These batch sizes are per-GPU. With 4 GPUs and DDP, the effective global batch size is 4x these values.
+**Note**: These batch sizes are per-GPU. With 1 GPUs and without DDP.
 
 This technique speeds up early training and improves final accuracy.
 
@@ -333,7 +334,7 @@ This technique speeds up early training and improves final accuracy.
   - Base LR: 1e-3 (default for 4 GPUs), 2.5e-4 (for 1 GPU)
   - Weight Decay: 1e-4
 - **Scheduler**: OneCycleLR
-  - Max LR: 1e-2 (default for 4 GPUs), 2.5e-3 (for 1 GPU)
+  - Max LR: 1e-2 (default for 4 GPUs), 4.0e-3 (for 1 GPU)
   - pct_start: 0.3 (30% warmup)
   - anneal_strategy: cosine
 
@@ -354,15 +355,7 @@ tail -f nohup.out  # or your log file
 ls -lh checkpoints/
 ```
 
-### Expected Training Metrics
-
-| Epoch | Image Size | Batch Size | Time/Epoch | Val Accuracy |
-|-------|------------|------------|------------|--------------|
-| 1-30 | 64×64 | 256 | ~15 min | 40-50% |
-| 31-50 | 128×128 | 128 | ~25 min | 60-65% |
-| 51-90 | 224×224 | 64 | ~40 min | 70-75% |
-
-**Total Training Time**: ~8-10 hours on 4x V100
+**Total Training Time**: ~24-36 hours on 1 AG10 GPU
 
 ---
 
