@@ -95,23 +95,11 @@ This repository now supports both **single-GPU** and **multi-GPU** training on I
 ```bash
 # Basic training
 python train.py \
-    --data-dir /path/to/ILSVRC \
-    --epochs 90 \
-    --batch-size 128 \
-    --lr 2.5e-4 \
-    --max-lr 2.5e-3 \
-    --num-workers 8 \
-    --save-dir ./checkpoints
+  --data-dir /mnt/ntfs/ILSVRC \
+  --drop-path-rate 0.05 \
+  --use-blurpool \
+  --epochs 110
 
-# With subset for testing
-python train.py \
-    --data-dir /path/to/ILSVRC \
-    --subset \
-    --subset-size 10000 \
-    --epochs 30 \
-    --batch-size 128 \
-    --lr 2.5e-4 \
-    --max-lr 2.5e-3
 ```
 
 ### Multi-GPU Training with DDP (4x V100)
@@ -163,8 +151,8 @@ python train.py \
 
 The training script uses **OneCycleLR** scheduler with separate base and maximum learning rates:
 
-- **Base LR (`--lr`)**: Initial learning rate for the optimizer (default: 1e-3 for 4 GPUs, 2.5e-4 for 1 GPU)
-- **Max LR (`--max-lr`)**: Peak learning rate during training (default: 1e-2 for 4 GPUs, 2.5e-3 for 1 GPU)
+- **Base LR (`--lr`)**: Initial learning rate for the optimizer (default: 1e-3 for GPU)
+- **Max LR (`--max-lr`)**: Peak learning rate during training (default: 1e-2 for 4 GPUs, 4.0e-3 for 1 GPU)
 
 ### OneCycleLR Schedule:
 1. **Warmup Phase** (30% of training): LR increases from `base_lr` to `max_lr`
