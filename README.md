@@ -1,16 +1,16 @@
-## Ablation Runs
+## Initial Ablation Runs
 
 This folder contains the google colab notebook runs for ablation run studies on **Tiny ImageNet** dataset so that we are able to access the techniques that need to be applied on ImageNet 1k.
 
 Following Notebooks are added:
 
 1. **ablation_run_tiny_imagenet_01.ipynb**: experimented with the following techniques in this notebook (https://colab.research.google.com/drive/12ICjPtVgA7EpOD2QFIMIHHTX9ikDOrbx?usp=sharing):
-   *  ResNet50 basic architetcure
+   *  ResNet50 basic architecture
    *  ResNet50 pre ativation architecture (without ReLu in skip connection)
-   *  ResNet50 basic architetcure with conv layer instead of last FC layer.
+   *  ResNet50 basic architecture with conv layer instead of last FC layer.
    *  These architectures have been tried with --> lr finder, image augmentations, mixup, mixed precision training
   
-**Conclusion**: final best acc was obtained with ResNet50 basic architetcure with conv layer instead of last FC layer. Learning rate finding needs to be honed!!.
+**Conclusion**: final best acc was obtained with ResNet50 basic architecture with conv layer instead of last FC layer. Learning rate finding needs to be honed!!.
  Refer to the notebook for each run detail and observations.
 
 2. **ablation_run_tiny_imagenet_02.ipynb**: (https://colab.research.google.com/drive/1pA6fT3FFl-X-fMqPbr9s2KTZ77YqfbZW?usp=sharing) experimented with following techniques in this notebook:
@@ -57,11 +57,11 @@ ema.restore()       # Restore original weights
 
 ---
 
-## ImageNet-1K Training with DDP (Distributed Data Parallel)
+## Actual ImageNet-1K Training 
 
 This repository now supports both **single-GPU** and **multi-GPU** training on ImageNet-1K dataset using PyTorch's DistributedDataParallel (DDP).
 
-### 🚀 Hardware Setup: AWS EC2 g5.2xlarge
+### 🚀 Hardware Setup: AWS EC2 p3.8xlarge
 
 **Instance Specifications:**
 - **Instance Type**: p3.8xlarge
@@ -95,11 +95,26 @@ This repository now supports both **single-GPU** and **multi-GPU** training on I
 ```bash
 # Basic training
 python train.py \
-  --data-dir /mnt/ntfs/ILSVRC \
-  --drop-path-rate 0.05 \
-  --use-blurpool \
-  --epochs 110
+    --data-dir /path/to/ILSVRC \
+    --epochs 110 \
+    --batch-size 128 \
+    --num-workers 8 \
+    --save-dir ./checkpoints
 
+# With subset for testing
+python train.py \
+    --data-dir /path/to/ILSVRC \
+    --subset \
+    --subset-size 10000 \
+    --epochs 30 \
+    --batch-size 128
+
+# Resume from checkpoint
+python train.py \
+    --data-dir /path/to/ILSVRC \
+    --resume ./checkpoints/best_resnet50_imagenet_1k.pt \
+    --epochs 110 \
+    --batch-size 128
 ```
 
 ### Multi-GPU Training with DDP (4x V100)
@@ -110,10 +125,8 @@ python train.py \
     --ddp \
     --world-size 4 \
     --data-dir /path/to/ILSVRC \
-    --epochs 90 \
+    --epochs 110 \
     --batch-size 128 \
-    --lr 1e-3 \
-    --max-lr 1e-2 \
     --num-workers 8 \
     --save-dir ./checkpoints \
     --drop-path-rate 0.2
@@ -123,14 +136,22 @@ python train.py \
     --ddp \
     --world-size 4 \
     --data-dir /path/to/ILSVRC \
-    --epochs 90 \
+    --epochs 110 \
     --batch-size 128 \
-    --lr 1e-3 \
-    --max-lr 1e-2 \
     --num-workers 8 \
     --save-dir ./checkpoints \
     --drop-path-rate 0.2 \
     --use-blurpool
+
+# Resume from checkpoint with DDP
+python train.py \
+    --ddp \
+    --world-size 4 \
+    --data-dir /path/to/ILSVRC \
+    --resume ./checkpoints/best_resnet50_imagenet_1k.pt \
+    --epochs 110 \
+    --batch-size 128 \
+    --drop-path-rate 0.2
 
 # With subset for testing (faster iteration)
 python train.py \
@@ -140,56 +161,84 @@ python train.py \
     --subset \
     --subset-size 10000 \
     --epochs 30 \
+    --batch-size 128
+```
+
+### Additional Training Script (Fine-tuning from Checkpoint)
+
+```bash
+# Fine-tune from checkpoint with custom settings
+python train_additional.py \
+    --checkpoint ./checkpoints/best_resnet50_imagenet_1k.pt \
+    --data-dir /path/to/ILSVRC \
+    --epochs 10 \
+    --lr 1e-4 \
+    --max-lr 5e-4 \
+    --image-size 320 \
+    --batch-size 64 \
+    --drop-path-rate 0.05 \
+    --no-mixup  # Disable mixup/cutmix for fine-tuning
+
+# With BlurPool enabled
+python train_additional.py \
+    --checkpoint ./checkpoints/best_resnet50_imagenet_1k.pt \
+    --data-dir /path/to/ILSVRC \
+    --epochs 10 \
+    --lr 1e-4 \
+    --max-lr 5e-4 \
+    --image-size 320 \
+    --batch-size 64
+```
+
+### Learning Rate Finder
+
+```bash
+# Find optimal learning rate
+python lr_finder.py \
+    --data-dir /path/to/ILSVRC \
     --batch-size 128 \
-    --lr 1e-3 \
-    --max-lr 1e-2
+    --image-size 224 \
+    --num-iter 300 \
+    --save-plot lr_finder_plot.png
+
+# With subset for faster LR finding
+python lr_finder.py \
+    --data-dir /path/to/ILSVRC \
+    --subset \
+    --subset-size 10000 \
+    --batch-size 128 \
+    --image-size 224 \
+    --num-iter 200
 ```
 
 ---
 
 ## 📈 Learning Rate Configuration
 
-The training script uses **OneCycleLR** scheduler with separate base and maximum learning rates:
+The training script uses a **single continuous OneCycleLR scheduler** that spans all training phases:
 
-- **Base LR (`--lr`)**: Initial learning rate for the optimizer (default: 1e-3 for GPU)
-- **Max LR (`--max-lr`)**: Peak learning rate during training (default: 1e-2 for 4 GPUs, 4.0e-3 for 1 GPU)
+- **Initial LR**: 1e-3 (automatically set)
+- **Max LR**: 4e-3 (peak learning rate, used for entire training)
+- **Strategy**: Single continuous scheduler with natural decay across all phases
 
 ### OneCycleLR Schedule:
-1. **Warmup Phase** (30% of training): LR increases from `base_lr` to `max_lr`
-2. **Annealing Phase** (70% of training): LR decreases from `max_lr` to `base_lr/25`
+1. **Warmup Phase** (30% of total training): LR increases from `1e-3` to `4e-3`
+2. **Annealing Phase** (70% of total training): LR decreases from `4e-3` to very low values
 
-### Recommended Learning Rates:
+**Note**: The scheduler automatically adjusts across progressive resizing phases without recreation. The learning rate naturally decays as training progresses through all phases.
 
-| Setup | Base LR (`--lr`) | Max LR (`--max-lr`) | Notes |
-|-------|------------------|---------------------|-------|
-| **1 GPU** | 2.5e-4 | 2.5e-3 | Standard single GPU configuration |
-| **4 GPUs (DDP)** | 1e-3 | 1e-2 | 4x scaling from single GPU |
-| **4 GPUs (Conservative)** | 5e-4 | 5e-3 | If training is unstable |
-| **4 GPUs (Aggressive)** | 2e-3 | 2e-2 | For faster convergence |
+### Recommended Training Epochs:
 
-**Recommendation**: Start with **default values** based on your GPU setup and adjust based on training stability.
-
-```bash
-# Single GPU (recommended)
-python train.py --lr 2.5e-4 --max-lr 2.5e-3 --data-dir /path/to/ILSVRC
-
-# 4 GPUs DDP (recommended)
-python train.py --ddp --world-size 4 --lr 1e-3 --max-lr 1e-2 --data-dir /path/to/ILSVRC
-
-# Conservative (if training is unstable)
-python train.py --ddp --world-size 4 --lr 5e-4 --max-lr 5e-3 --data-dir /path/to/ILSVRC
-
-# Aggressive (for faster convergence)
-python train.py --ddp --world-size 4 --lr 2e-3 --max-lr 2e-2 --data-dir /path/to/ILSVRC
-```
+- **Full Training**: 110 epochs (covers all 4 phases)
+- **Quick Test**: 30-40 epochs (covers Phase 1 and start of Phase 2)
 
 ---
 
 ## 🗂️ Dataset Structure
 
-The code supports both **ILSVRC** (official ImageNet) structure and simple **train/val** folder structure:
+The code supports both **ILSVRC** (official ImageNet) structure with XML annotations and simple **train/val** folder structure:
 
-### ILSVRC Structure
+### ILSVRC Structure (Recommended)
 ```
 ILSVRC/
 ├── Data/
@@ -204,10 +253,20 @@ ILSVRC/
 │           ├── ILSVRC2012_val_00000001.JPEG
 │           ├── ILSVRC2012_val_00000002.JPEG
 │           └── ... (50,000 images)
+├── Annotations/
+│   └── CLS-LOC/
+│       ├── train/
+│       │   ├── n01440764_0.xml
+│       │   └── ... (XML annotation files)
+│       └── val/
+│           ├── ILSVRC2012_val_00000001.xml
+│           └── ... (XML annotation files)
 └── ImageSets/
     └── CLS-LOC/
-        └── val.txt  # Format: "image_name class_index"
+        └── val.txt  # Format: "image_name class_index" (optional)
 ```
+
+**Note**: If XML annotations are present, the code automatically uses them for accurate class mapping. Otherwise, it falls back to folder-based structure.
 
 ### Simple Structure (Backward Compatible)
 ```
@@ -226,41 +285,101 @@ imagenet/
 
 ## 🏗️ EC2 Setup Guide
 
-### 1. Launch p3.8xlarge Spot Instance
+### 1. Download ImageNet Dataset
+
+* Create **EBS (350 GB) volume** to download dataset 
+
+<img width="450" height="250" alt="image" src="https://github.com/user-attachments/assets/4194ed21-f9ed-4980-adf9-942958e38700" />
+
+* Creat a windows instance to attach volume and download dataset
+
+<img width="450" height="250" alt="image" src="https://github.com/user-attachments/assets/a5b28a89-3b94-44ca-ae0e-c96822a7ce54" />
+
+<img width="450" height="250" alt="image" src="https://github.com/user-attachments/assets/4b21d56d-c02e-4fbc-b936-7b8d97abf82d" />
+
+* Network Settings -> Edit chose Availibility Zone -> select the availability zone same as EBS volume created
+
+* Attach the EBS volume created to the windows instance.
+
+* Download and install free download manager: https://www.freedownloadmanager.org/landing.htm
+* Also download and install 7zip
+
+Now open kaggle data link in browser:
+
+[ImageNet Object Localization Challenge | Kaggle](https://www.kaggle.com/competitions/imagenet-object-localization-challenge/data?select=ILSVRC) (sign in)
+
+Go to inspect -> network tab in browser
+
+Click on download -> pause the actual download, copy the download url from network tab
+
+Open free download manager -> paste url Choose D drive and start download (will take approx. 25 mins)
+
+Now disable windows defender -> Set-MpPreference -DisableRealtimeMonitoring $true
+
+use 7zip to browse ILSVRC folders and start download one by one (should take 25 mins)
+
+
+### 2. Launch g5.2xlarge Spot Instance
 
 ```bash
 # Use AWS Deep Learning AMI (Ubuntu 20.04)
 # AMI: Deep Learning AMI GPU PyTorch 2.1.0 (Ubuntu 20.04)
-# Storage: 500GB EBS volume for ImageNet dataset
+# Storage: 350GB EBS volume for ImageNet dataset
 ```
+<img width="450" height="250" alt="image" src="https://github.com/user-attachments/assets/fa2d699c-031b-4fd9-be26-a4d7791d457d" />
 
-### 2. Install Dependencies
+
+<img width="450" height="250" alt="image" src="https://github.com/user-attachments/assets/281e20db-ee56-4bcb-bfcb-377c25611be6" />
+
+
+attach EBS volume to this instance
+
+
+### 3. Install Dependencies
 
 ```bash
+# Install tmux
+sudo apt update
+sudo apt install tmux
+
+# create session in tmux
+tmux new -s mysession
+
+# install ntfs file manager
+sudo apt install ntfs-3g
+
+# make a new directory and use it to mount drive (the EBS volume)
+sudo mkdir -p /mnt/ntfs
+
+# now attach drive (use lsblk command to check drive name in instance)
+sudo mount -t ntfs-3g /dev/nvme2n1p2 /mnt/ntfs
+
+# Now change directory to the drive
+cd /mnt/ntfs
+
 # Clone repository
 git clone https://github.com/sandipautane/mid-capstone.git
 cd mid-capstone
 
+# Installing python
+sudo apt install -y python3.12 python3.12-venv
+
+# create venv
+python3.12 -m venv venv
+
+# activate venv
+source venv/bin/activate
+
 # Install requirements
 pip install -r requirements.txt
 
+# note - If In case git pull is required again in case code is updated, use below command
+git config --global --add safe.directory /mnt/ntfs/mid-capstone
+git pull origin main
+
 # Verify GPU availability
 python -c "import torch; print(f'GPUs available: {torch.cuda.device_count()}')"
-# Expected output: GPUs available: 4
-```
-
-### 3. Download ImageNet Dataset
-
-```bash
-# Option 1: Download from official source (requires registration)
-# https://image-net.org/challenges/LSVRC/2012/
-
-# Option 2: Use existing S3 bucket or EFS mount
-# aws s3 sync s3://your-bucket/ILSVRC /data/ILSVRC
-
-# Verify dataset structure
-ls /data/ILSVRC/Data/CLS-LOC/train | wc -l  # Should be 1000
-ls /data/ILSVRC/Data/CLS-LOC/val | wc -l    # Should be 50000
+# Expected output: GPUs available: 1
 ```
 
 ### 4. Start Training
@@ -271,16 +390,10 @@ tmux new -s training
 
 # Start DDP training
 python train.py \
-    --ddp \
-    --world-size 4 \
-    --data-dir /data/ILSVRC \
-    --epochs 90 \
-    --batch-size 128 \
-    --lr 1e-3 \
-    --max-lr 1e-2 \
-    --num-workers 8 \
-    --save-dir ./checkpoints \
-    --drop-path-rate 0.2
+  --data-dir /mnt/ntfs/ILSVRC \
+  --drop-path-rate 0.05 \
+  --use-blurpool \
+  --epochs 110
 
 # Detach from tmux: Ctrl+B, then D
 # Reattach: tmux attach -t training
@@ -290,27 +403,31 @@ python train.py \
 
 ## 🎯 Training Features
 
-### Progressive Image Resizing
+### Progressive Image Resizing (4 Phases)
 The training script automatically adjusts image sizes during training:
-- **Phase 1 - Warm-up Epochs 1-15**: 128×128 (batch size: 128)
-- **Phase 2 - Main Epochs 16-80**: 228×228 (batch size: 128)
-- **Phase 3 - Refine Epochs 81-95**: 320×320 (batch size: 64)
-- **Phase 4 - Optional FT Epochs 96-110**: 388×388 (batch size: 64)
+- **Phase 1 (Epochs 1-15)**: 128×128 (batch size: 128)
+- **Phase 2 (Epochs 16-80)**: 224×224 (batch size: 128)
+- **Phase 3 (Epochs 81-95)**: 288×288 (batch size: 128)
+- **Phase 4 (Epochs 96-110)**: 320×320 (batch size: 64)
 
-**Note**: These batch sizes are per-GPU. With 1 GPUs and without DDP.
+**Note**: These batch sizes are per-GPU. With 4 GPUs and DDP, the effective global batch size is 4x these values.
+
+**Phase-Specific Behavior:**
+- **Phases 1-2**: Full data augmentation (MixUp, CutMix), Stochastic Depth enabled
+- **Phases 3-4**: MixUp/CutMix **disabled** (fine-tuning), Stochastic Depth **disabled** (fine-tuning)
 
 This technique speeds up early training and improves final accuracy.
 
 ### Data Augmentation
-- **MixUp** (alpha=0.2): Blends pairs of images and labels
-- **CutMix** (alpha=1.0): Cuts and pastes image patches
+- **MixUp** (alpha=0.2): Blends pairs of images and labels (disabled in Phase 3-4)
+- **CutMix** (alpha=1.0): Cuts and pastes image patches (disabled in Phase 3-4)
 - **RandomHorizontalFlip**: 50% probability
 - **ShiftScaleRotate**: Slight geometric transformations
 - **ColorJitter**: Brightness, contrast, saturation adjustments
 - **CoarseDropout**: Random rectangular cutout
 
 ### Regularization Techniques
-- **Stochastic Depth (DropPath)**: Drop rate = 0.2
+- **Stochastic Depth (DropPath)**: Drop rate = 0.2 (disabled in Phase 3-4)
 - **Label Smoothing**: 0.1
 - **Weight Decay**: 1e-4
 - **Gradient Clipping**: Max norm = 1.0
@@ -319,12 +436,115 @@ This technique speeds up early training and improves final accuracy.
 
 ### Optimizer & Scheduler
 - **Optimizer**: AdamW
-  - Base LR: 1e-3 (default for 4 GPUs), 2.5e-4 (for 1 GPU)
+  - Initial LR: 1e-3 (automatically set)
   - Weight Decay: 1e-4
-- **Scheduler**: OneCycleLR
-  - Max LR: 1e-2 (default for 4 GPUs), 4.0e-3 (for 1 GPU)
+- **Scheduler**: OneCycleLR (single continuous scheduler)
+  - Max LR: 4e-3 (peak for entire training)
   - pct_start: 0.3 (30% warmup)
   - anneal_strategy: cosine
+  - **Note**: Single scheduler spans all phases, no recreation at phase transitions
+
+### Checkpoint Resuming
+The training script fully supports resuming from checkpoints:
+- Saves optimizer, scheduler, and model state
+- Automatically continues from the correct epoch
+- Preserves learning rate schedule seamlessly
+- Handles progressive resizing correctly
+
+---
+
+## Training Progress
+Below are the snapshots of training progress!!
+
+<img width="450" height="250" alt="image" src="https://github.com/user-attachments/assets/e58c01ac-2d06-4b96-9123-bf831b262d41" />
+
+<img width="450" height="250" alt="image" src="https://github.com/user-attachments/assets/7a31105a-6454-4f3e-a6e4-20d545d4f7d8" />
+
+<img width="450" height="250" alt="image" src="https://github.com/user-attachments/assets/1de6f5a8-e6a9-4cb6-845c-ed0d282fc4f9" />
+
+<img width="450" height="250" alt="image" src="https://github.com/user-attachments/assets/ac00aea3-a4b9-4fd6-b673-12145e042388" />
+
+<img width="450" height="250" alt="image" src="https://github.com/user-attachments/assets/a1aaa020-b1b5-4f6d-80e5-22c7ce35c5c7" />
+
+<img width="450" height="250" alt="image" src="https://github.com/user-attachments/assets/54df40c1-be4c-4c91-9336-caf25b2b29fb" />
+
+<img width="450" height="250" alt="image" src="https://github.com/user-attachments/assets/19751c73-e50a-42b5-aa24-e88ce91d4e76" />
+
+
+## 🎨 Inference & Deployment
+
+### Hugging Face Spaces Deployment
+
+The model is deployed as a Gradio web interface on Hugging Face Spaces:
+
+**Live Demo**: [https://huggingface.co/spaces/saneshashank/ImageNet1k](https://huggingface.co/spaces/saneshashank/ImageNet1k)
+
+**Model Performance**: 71% top-1 accuracy on ImageNet-1K validation set
+
+### Local Inference Setup
+
+The `hf_spaces/` folder contains code for running inference locally or deploying to Hugging Face Spaces:
+
+```bash
+# Navigate to hf_spaces directory
+cd hf_spaces
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Download the trained model checkpoint
+# Place best_resnet50_imagenet_1k.pt in the hf_spaces directory
+
+# Run the Gradio app locally
+python app.py
+```
+
+### Inference Code Structure
+
+The `hf_spaces/` folder contains:
+- **app.py**: Gradio interface for image classification
+- **model.py**: ResNet50 model definition (with BlurPool support)
+- **imagenet_classes.json**: ImageNet class labels mapping
+- **requirements.txt**: Dependencies for inference
+
+### Features:
+- **Top-5 Predictions**: Shows top 5 most likely classes with confidence scores
+- **Interactive UI**: Upload images and get instant predictions
+- **Model Configuration**: Uses BlurPool-enabled ResNet50 trained on ImageNet-1K
+
+### Example Usage:
+
+```python
+from PIL import Image
+import torch
+from model import resnet50
+from torchvision import transforms
+
+# Load model
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = resnet50(num_classes=1000, drop_path_rate=0.0, use_blurpool=True)
+checkpoint = torch.load('best_resnet50_imagenet_1k.pt', map_location=device)
+model.load_state_dict(checkpoint['model_state_dict'])
+model.to(device)
+model.eval()
+
+# Preprocess image
+transform = transforms.Compose([
+    transforms.Resize(256),
+    transforms.CenterCrop(224),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+])
+
+# Predict
+image = Image.open("your_image.jpg")
+img_tensor = transform(image).unsqueeze(0).to(device)
+
+with torch.no_grad():
+    outputs = model(img_tensor)
+    probabilities = torch.nn.functional.softmax(outputs, dim=1)[0]
+    top5_prob, top5_idx = torch.topk(probabilities, 5)
+```
 
 ---
 
@@ -343,7 +563,16 @@ tail -f nohup.out  # or your log file
 ls -lh checkpoints/
 ```
 
-**Total Training Time**: ~24-36 hours on 1 AG10 GPU
+### Expected Training Metrics
+
+| Phase | Epochs | Image Size | Batch Size | Time/Epoch | Val Accuracy |
+|-------|--------|------------|------------|------------|--------------|
+| Phase 1 | 1-15 | 128×128 | 128 | ~10 min | 40-50% |
+| Phase 2 | 16-80 | 224×224 | 128 | ~25 min | 60-70% |
+| Phase 3 | 81-95 | 288×288 | 128 | ~35 min | 70-75% |
+| Phase 4 | 96-110 | 320×320 | 64 | ~45 min | 75-80% |
+
+**Total Training Time**: ~10-12 hours on 4x V100 (110 epochs)
 
 ---
 
@@ -372,20 +601,30 @@ ls -lh checkpoints/
 
 ### Issue: Validation Accuracy Not Improving
 **Solutions**:
-- Lower learning rate: Try `--lr 6e-4` instead of `1.2e-3`
-- Check data augmentation (may be too aggressive)
-- Increase training epochs
-- Verify dataset labels are correct
+- Verify dataset labels are correct (especially with XML annotations)
+- Check data augmentation (may be too aggressive in early phases)
+- Increase training epochs (ensure you reach Phase 3-4 for fine-tuning)
+- Try different learning rate (use LR finder script)
+
+### Issue: Checkpoint Resume Not Working
+**Solutions**:
+- Ensure checkpoint file exists and is not corrupted
+- Verify checkpoint was saved with same model architecture
+- Check that `--epochs` is sufficient to continue training
 
 ---
 
 ## 📦 Key Files
 
-- **train.py**: Main training script with DDP support
-- **dataloader.py**: Dataset loaders for ILSVRC and simple structures
-- **train_utils.py**: Training/validation loops, mixup, cutmix
+- **train.py**: Main training script with DDP support and checkpoint resuming
+- **train_additional.py**: Fine-tuning script for additional training from checkpoints
+- **lr_finder.py**: Learning rate finder utility
+- **dataloader.py**: Dataset loaders for ILSVRC (with XML annotations) and simple structures
+- **train_utils.py**: Training/validation loops, mixup, cutmix, progressive resizing utilities
 - **data_utils.py**: Data augmentation utilities
 - **models/model.py**: ResNet50 with Stochastic Depth and BlurPool
+- **hf_spaces/app.py**: Gradio inference interface
+- **hf_spaces/model.py**: ResNet50 model for inference
 - **requirements.txt**: Python dependencies
 
 ---
@@ -394,20 +633,48 @@ ls -lh checkpoints/
 
 ### Resume Training from Checkpoint
 
-```python
-# Add to train.py (requires code modification)
-if args.resume:
-    checkpoint = torch.load(args.resume)
-    model.load_state_dict(checkpoint['model_state_dict'])
-    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    start_epoch = checkpoint['epoch'] + 1
+```bash
+# Resume from checkpoint
+python train.py \
+    --data-dir /path/to/ILSVRC \
+    --resume ./checkpoints/best_resnet50_imagenet_1k.pt \
+    --epochs 110 \
+    --batch-size 128
+
+# The script automatically:
+# - Loads model, optimizer, and scheduler state
+# - Continues from the correct epoch
+# - Preserves learning rate schedule
+# - Handles progressive resizing correctly
+```
+
+### Fine-tuning with Custom Settings
+
+```bash
+# Use train_additional.py for flexible fine-tuning
+python train_additional.py \
+    --checkpoint ./checkpoints/best_resnet50_imagenet_1k.pt \
+    --data-dir /path/to/ILSVRC \
+    --epochs 15 \
+    --lr 5e-5 \
+    --max-lr 2e-4 \
+    --image-size 384 \
+    --batch-size 48 \
+    --drop-path-rate 0.0 \
+    --no-mixup
 ```
 
 ### Custom Learning Rate Schedule
 
 ```bash
-# Modify in train.py for different schedules
-# Options: CosineAnnealingLR, StepLR, ExponentialLR
+# Use LR finder to determine optimal learning rates
+python lr_finder.py \
+    --data-dir /path/to/ILSVRC \
+    --batch-size 128 \
+    --image-size 224 \
+    --num-iter 300
+
+# Then use the suggested LR in train_additional.py
 ```
 
 ### Enable TensorBoard Logging
@@ -428,6 +695,7 @@ tensorboard --logdir=runs --port=6006
 - [Progressive Resizing Paper](https://arxiv.org/abs/1905.00546)
 - [MixUp Paper](https://arxiv.org/abs/1710.09412)
 - [CutMix Paper](https://arxiv.org/abs/1905.04899)
+- [BlurPool Paper](https://arxiv.org/abs/1904.11486)
 
 ---
 
