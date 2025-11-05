@@ -61,32 +61,6 @@ ema.restore()       # Restore original weights
 
 This repository now supports both **single-GPU** and **multi-GPU** training on ImageNet-1K dataset using PyTorch's DistributedDataParallel (DDP).
 
-### 🚀 Hardware Setup: AWS EC2 p3.8xlarge
-
-**Instance Specifications:**
-- **Instance Type**: p3.8xlarge
-- **GPUs**: 4x NVIDIA V100 (16GB each)
-- **vCPUs**: 32
-- **RAM**: 244 GB
-- **Network**: Up to 10 Gbps
-- **Spot Price**: ~$1.20-1.50/hour
-- **On-Demand Price**: ~$12.24/hour
-
-**Cost Estimates for 75% Accuracy:**
-- **Training Time**: ~8-10 hours (with 4 GPUs)
-- **Total Cost**: ~$10-15 (using spot instances)
-- **Cost Savings**: ~90% compared to on-demand pricing
-
-### 📊 Performance Comparison
-
-| Setup | GPUs | Batch Size | Training Time | Cost (Spot) | Speedup |
-|-------|------|------------|---------------|-------------|---------|
-| Single GPU | 1x V100 | 128 | ~32-40 hours | ~$40-60 | 1x |
-| DDP (Multi-GPU) | 4x V100 | 128 per GPU | ~8-10 hours | ~$10-15 | ~4x |
-
-**Note**: With DDP, each GPU processes a batch independently, so effective batch size = 128 × 4 = 512
-
----
 
 ## 🔧 Training Commands
 
